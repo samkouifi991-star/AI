@@ -1,6 +1,7 @@
 import { supabaseServiceRole } from './supabase/admin';
 import { getVoiceProvider, FALLBACK_VOICE } from './voice';
 import { logger } from './logger';
+import { VAPI_TOOLS } from './vapi-tools';
 
 const VAPI_API_BASE = 'https://api.vapi.ai';
 
@@ -30,7 +31,13 @@ export async function createAssistant(params: {
       body: JSON.stringify({
         name: params.name,
         firstMessage: params.firstMessage,
-        model: { provider: 'openai', model: 'gpt-4o', temperature: 0.3, systemPrompt: params.systemPrompt },
+        model: {
+          provider: 'openai',
+          model: 'gpt-4o',
+          temperature: 0.3,
+          systemPrompt: params.systemPrompt,
+          functions: VAPI_TOOLS
+        },
         voice: { provider: params.voiceProvider, voiceId: params.voiceId, model: 'eleven_multilingual_v2' },
         serverUrl: params.serverUrl,
         serverUrlSecret: params.serverUrlSecret

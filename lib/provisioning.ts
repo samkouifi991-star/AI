@@ -1,6 +1,7 @@
 import { supabaseServiceRole } from './supabase/admin';
 import { purchaseNumber, twilioClientForConnection, releaseNumber } from './twilio';
 import { createAssistant, importTwilioNumberToVapi, deleteVapiPhoneNumber, deleteAssistant } from './vapi-assistant';
+import { buildSystemPrompt } from './vapi-tools';
 import { decryptSecret } from './crypto';
 import { logger } from './logger';
 
@@ -89,7 +90,7 @@ export async function runBuyNumberWorkflow(params: {
   // Step 1: subscription eligibility
   const { data: business } = await supabase
     .from('businesses')
-    .select('id, name, vapi_assistant_id')
+    .select('id, name, business_type, service_area, vapi_assistant_id')
     .eq('id', params.businessId)
     .single();
   if (!business) return fail(ctx, 'verify_subscription', 'Business not found.');
@@ -124,7 +125,7 @@ export async function runBuyNumberWorkflow(params: {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
     const created = await createAssistant({
       name: `${business.name} Receptionist`,
-      systemPrompt: `You are the virtual receptionist for ${business.name}. Answer using the business's knowledge base, collect caller details, and transfer to a human for anything urgent.`,
+      systemPrompt: buildSystemPrompt(business),
       firstMessage: `Thanks for calling ${business.name} — how can I help you today?`,
       voiceProvider: voiceSettings?.voice_provider ?? 'elevenlabs',
       voiceId: voiceSettings?.voice_id ?? '21m00Tcm4TlvDq8ikWAM',
@@ -234,7 +235,7 @@ export async function runImportByoNumberWorkflow(params: {
 
   const { data: business } = await supabase
     .from('businesses')
-    .select('id, name, vapi_assistant_id')
+    .select('id, name, business_type, service_area, vapi_assistant_id')
     .eq('id', params.businessId)
     .single();
   if (!business) return fail(ctx, 'verify_subscription', 'Business not found.');
@@ -262,7 +263,7 @@ export async function runImportByoNumberWorkflow(params: {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
     const created = await createAssistant({
       name: `${business.name} Receptionist`,
-      systemPrompt: `You are the virtual receptionist for ${business.name}. Answer using the business's knowledge base, collect caller details, and transfer to a human for anything urgent.`,
+      systemPrompt: buildSystemPrompt(business),
       firstMessage: `Thanks for calling ${business.name} — how can I help you today?`,
       voiceProvider: voiceSettings?.voice_provider ?? 'elevenlabs',
       voiceId: voiceSettings?.voice_id ?? '21m00Tcm4TlvDq8ikWAM',
