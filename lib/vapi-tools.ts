@@ -170,6 +170,18 @@ export const VAPI_TOOLS = [
   }
 ] as const;
 
+// Practice mode is text-only rehearsal, not a real phone call — language
+// detection/switching is a call-audio concept that doesn't apply.
+export const PRACTICE_TOOLS = VAPI_TOOLS.filter((t) => t.name !== 'detect_language' && t.name !== 'switch_language');
+
+/** Converts Vapi's function-list shape into OpenAI chat.completions' tools shape. */
+export function toOpenAiChatTools(tools: readonly { name: string; description: string; parameters: Record<string, unknown> }[]) {
+  return tools.map((t) => ({
+    type: 'function' as const,
+    function: { name: t.name, description: t.description, parameters: t.parameters }
+  }));
+}
+
 /**
  * Builds the system prompt Ava actually runs on for a given business.
  * Restaurant businesses get the ordering-flow instructions; service
