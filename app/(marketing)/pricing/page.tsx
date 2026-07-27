@@ -56,8 +56,8 @@ export default function PricingPage() {
         </div>
         <p className="text-xs text-slate-400 mt-4 text-center max-w-xl mx-auto">
           If you buy a phone number through Business Pilot AI, its monthly rental fee is separate from your plan price
-          and shown before purchase. Overage rates for extra minutes or SMS beyond your plan's included usage are
-          published in your account's billing settings.
+          and shown before purchase. Overage rates for extra minutes or SMS beyond your plan&apos;s included usage are
+          published in your account&apos;s billing settings.
         </p>
       </section>
 

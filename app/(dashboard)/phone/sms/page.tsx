@@ -72,7 +72,7 @@ export default function SmsSettingsPage() {
       {settings.messagingRegistrationStatus !== 'registered' && (
         <div className="text-sm text-warning bg-amber-50 rounded-lg px-3 py-2">
           Messaging registration status: <strong>{settings.messagingRegistrationStatus}</strong>. Twilio requires A2P 10DLC
-          registration for higher-volume SMS in the US — until that's complete, messages may be rate-limited or filtered by
+          registration for higher-volume SMS in the US — until that&apos;s complete, messages may be rate-limited or filtered by
           carriers. This is a Twilio account-level requirement, not something this app can complete on your behalf.
         </div>
       )}

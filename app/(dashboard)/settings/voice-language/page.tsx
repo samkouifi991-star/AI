@@ -391,7 +391,7 @@ export default function VoiceLanguagePage() {
             onChange={(e) => setSettings((s) => ({ ...s, auto_detect_language: e.target.checked }))}
           />
           <label htmlFor="auto-detect" className="text-sm text-slate-600">
-            Automatically detect the caller's language and respond in it
+            Automatically detect the caller&apos;s language and respond in it
           </label>
         </div>
 

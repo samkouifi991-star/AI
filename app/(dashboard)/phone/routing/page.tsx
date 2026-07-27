@@ -71,7 +71,7 @@ export default function RoutingPage() {
     <div className="max-w-2xl space-y-6">
       <div>
         <h1 className="font-display text-2xl font-semibold mb-1">Call routing</h1>
-        <p className="text-slate-600 text-sm">Decide how incoming calls are handled, and where they go if the AI can't help.</p>
+        <p className="text-slate-600 text-sm">Decide how incoming calls are handled, and where they go if the AI can&apos;t help.</p>
       </div>
 
       {saved && <div className="text-sm text-success bg-green-50 rounded-lg px-3 py-2">Saved.</div>}

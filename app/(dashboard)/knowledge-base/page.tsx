@@ -38,6 +38,7 @@ export default function KnowledgeBasePage() {
       }
     }
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {

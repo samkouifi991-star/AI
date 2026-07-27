@@ -205,7 +205,7 @@ export default function OnboardingWizard() {
     <div className="max-w-2xl space-y-6">
       <div>
         <h1 className="font-display text-2xl font-semibold mb-1">Set up Business Pilot AI</h1>
-        <p className="text-slate-600 text-sm">About 10–15 minutes. We'll walk you through everything.</p>
+        <p className="text-slate-600 text-sm">About 10–15 minutes. We&apos;ll walk you through everything.</p>
       </div>
 
       <div className="flex items-center gap-1">
@@ -263,7 +263,7 @@ export default function OnboardingWizard() {
             <div className="space-y-2">
               <input className="input" placeholder="Your existing business number" value={existingNumber} onChange={(e) => setExistingNumber(e.target.value)} />
               <button className="btn-primary" onClick={saveForwarding} disabled={phoneBusy}>{phoneBusy ? 'Saving…' : 'Save and continue'}</button>
-              <p className="text-xs text-slate-500">You'll get carrier-specific forwarding instructions in full Phone Settings after setup.</p>
+              <p className="text-xs text-slate-500">You&apos;ll get carrier-specific forwarding instructions in full Phone Settings after setup.</p>
             </div>
           )}
 
@@ -286,7 +286,7 @@ export default function OnboardingWizard() {
 
       {stage === 'voice' && (
         <section className="card space-y-3">
-          <h2 className="font-display text-lg font-semibold">Choose your AI's voice</h2>
+          <h2 className="font-display text-lg font-semibold">Choose your AI&apos;s voice</h2>
           <div className="grid sm:grid-cols-2 gap-2">
             {voices.map((v) => (
               <button key={v.id} onClick={() => setSelectedVoice(v)} className={`text-left border rounded-lg p-2 ${selectedVoice?.id === v.id ? 'border-brand-500 bg-brand-50' : 'border-slate-200'}`}>
@@ -311,7 +311,7 @@ export default function OnboardingWizard() {
             Go to {form.business_type === 'restaurant' ? 'Menu' : 'Knowledge Base'}
           </a>
           <div>
-            <button className="btn-primary" onClick={skipKnowledgeForNow}>Continue (I'll finish this later)</button>
+            <button className="btn-primary" onClick={skipKnowledgeForNow}>Continue (I&apos;ll finish this later)</button>
           </div>
         </section>
       )}
@@ -334,7 +334,7 @@ export default function OnboardingWizard() {
       {stage === 'payments' && (
         <section className="card space-y-3">
           <h2 className="font-display text-lg font-semibold">Connect payments</h2>
-          <p className="text-sm text-slate-600">Connect your own Stripe account, or use Business Pilot AI's built-in payment processing.</p>
+          <p className="text-sm text-slate-600">Connect your own Stripe account, or use Business Pilot AI&apos;s built-in payment processing.</p>
           {stripeConnected ? (
             <div className="badge-success inline-block">Stripe connected</div>
           ) : (
@@ -358,7 +358,7 @@ export default function OnboardingWizard() {
 
       {stage === 'go_live' && (
         <section className="card space-y-3">
-          <h2 className="font-display text-lg font-semibold">You're ready to go live</h2>
+          <h2 className="font-display text-lg font-semibold">You&apos;re ready to go live</h2>
           <ul className="text-sm space-y-1">
             {STAGES.filter((s) => s !== 'go_live').map((s) => (
               <li key={s} className={completed.includes(s) ? 'text-success' : 'text-slate-400'}>

@@ -329,8 +329,8 @@ export default function PhoneNumbersPage() {
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-slate-600">
-                Twilio doesn't offer a one-click account link for third-party apps — connect with your Account SID and Auth
-                Token. Your token is encrypted before it's stored and is never shown again after saving.
+                Twilio doesn&apos;t offer a one-click account link for third-party apps — connect with your Account SID and Auth
+                Token. Your token is encrypted before it&apos;s stored and is never shown again after saving.
               </p>
               <input className="input" placeholder="Account SID" value={twilioCreds.accountSid} onChange={(e) => setTwilioCreds((c) => ({ ...c, accountSid: e.target.value }))} />
               <input className="input" type="password" placeholder="Auth Token" value={twilioCreds.authToken} onChange={(e) => setTwilioCreds((c) => ({ ...c, authToken: e.target.value }))} />

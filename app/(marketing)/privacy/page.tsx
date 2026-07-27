@@ -18,15 +18,15 @@ export default function PrivacyPage() {
             When you create an account, we collect your email address and the business information you provide during
             setup (business name, hours, services or menu, pricing rules). When your AI receptionist handles a call or
             order, we store the call transcript, recording, summary, and any customer details collected (name, phone,
-            email, address) so they're available in your dashboard.
+            email, address) so they&apos;re available in your dashboard.
           </p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold text-ink mb-2">How your data is isolated</h2>
           <p>
-            Every business's data — calls, leads, orders, appointments, and settings — is isolated at the database
-            level using row-level security. No business can query or view another business's records, regardless of
+            Every business&apos;s data — calls, leads, orders, appointments, and settings — is isolated at the database
+            level using row-level security. No business can query or view another business&apos;s records, regardless of
             how the request is made.
           </p>
         </section>
@@ -37,7 +37,7 @@ export default function PrivacyPage() {
           <ul className="list-disc pl-5 space-y-1 mt-2">
             <li>Voice and call handling providers, to answer and process phone calls</li>
             <li>A language-model provider, to generate responses and interpret uploaded business knowledge</li>
-            <li>Stripe, to process payments — we never store your customers' full card details</li>
+            <li>Stripe, to process payments — we never store your customers&apos; full card details</li>
             <li>Google, if you connect Google Calendar, to check and book appointment availability</li>
             <li>SMS/telephony providers, to send text confirmations and reminders</li>
           </ul>
@@ -62,7 +62,7 @@ export default function PrivacyPage() {
         <section>
           <h2 className="text-lg font-semibold text-ink mb-2">Your choices</h2>
           <p>
-            You can review, edit, or remove your business's knowledge base, menu, and settings at any time from your
+            You can review, edit, or remove your business&apos;s knowledge base, menu, and settings at any time from your
             dashboard. To request a copy of your data or have your account deleted, contact us using the details on
             our <a href="/contact" className="text-brand-600 font-medium">Contact page</a>.
           </p>

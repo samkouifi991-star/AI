@@ -242,7 +242,7 @@ export default function MenuPage() {
       <section className="card">
         <h2 className="font-display text-lg font-semibold mb-3">Import menu</h2>
         <p className="text-xs text-slate-500 mb-3">
-          Already have a published menu? You don't need to re-import to edit it — just scroll down.
+          Already have a published menu? You don&apos;t need to re-import to edit it — just scroll down.
         </p>
         <div className="flex flex-wrap gap-2 mb-4">
           {SOURCE_TYPES.map((s) => (

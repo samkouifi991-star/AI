@@ -44,7 +44,7 @@ export default function TestCenterPage() {
       <div>
         <h1 className="font-display text-2xl font-semibold mb-1">Test center</h1>
         <p className="text-slate-600 text-sm">
-          Verify your phone setup before going live. Some tests (marked "pending" below) require an actual phone call — no
+          Verify your phone setup before going live. Some tests (marked &quot;pending&quot; below) require an actual phone call — no
           server-side simulation can substitute for that, so those give you clear instructions instead of a fake pass.
         </p>
       </div>

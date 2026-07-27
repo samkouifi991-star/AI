@@ -76,7 +76,7 @@ export default function PricingCards() {
 
       <p className="text-center text-xs text-slate-400 mt-8 max-w-2xl mx-auto">
         Each plan includes a set number of AI call minutes per month. Additional call minutes, SMS messages, and phone
-        number rental beyond your plan's included usage are billed at published overage rates — usage is never
+        number rental beyond your plan&apos;s included usage are billed at published overage rates — usage is never
         unlimited on any plan.
       </p>
     </div>

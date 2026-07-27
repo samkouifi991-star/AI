@@ -30,7 +30,7 @@ export default function ContactForm() {
       <div className="card p-8 text-center">
         <div className="text-success text-2xl mb-2">✓</div>
         <div className="font-medium text-ink">Message sent</div>
-        <div className="text-sm text-slate-500 mt-1">We'll get back to you soon.</div>
+        <div className="text-sm text-slate-500 mt-1">We&apos;ll get back to you soon.</div>
       </div>
     );
   }

@@ -123,7 +123,7 @@ export default function HomePage() {
           <div className="grid sm:grid-cols-3 gap-6 text-left">
             <div className="bg-white/5 border border-white/10 rounded-xl p-5">
               <div className="text-white font-medium mb-1.5">Your data, isolated</div>
-              <div className="text-sm text-slate-400">Every business's calls, leads, and records are fully separated — never visible to anyone else.</div>
+              <div className="text-sm text-slate-400">Every business&apos;s calls, leads, and records are fully separated — never visible to anyone else.</div>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-xl p-5">
               <div className="text-white font-medium mb-1.5">Encrypted credentials</div>
