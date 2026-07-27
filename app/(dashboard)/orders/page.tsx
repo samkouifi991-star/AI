@@ -34,6 +34,7 @@ export default async function OrdersPage() {
         .from('orders')
         .select('*, order_items(name_snapshot, quantity)')
         .eq('business_id', business.id)
+        .eq('is_practice', false)
         .order('created_at', { ascending: false })
         .limit(50)
     : { data: [] };

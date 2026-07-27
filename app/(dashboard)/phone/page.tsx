@@ -16,16 +16,27 @@ export default async function PhoneOverviewPage() {
     return <div className="card max-w-md">Finish onboarding to set up phone management.</div>;
   }
 
-  const [{ data: numbers }, { data: voiceSettings }, { data: forwarding }, { data: routing }, { data: webhookStatuses }, { data: twilioConn }, { data: usage }] =
-    await Promise.all([
-      supabase.from('phone_numbers').select('*').eq('business_id', business.id).neq('status', 'released'),
-      supabase.from('business_voice_settings').select('voice_name, voice_provider').eq('business_id', business.id).single(),
-      supabase.from('forwarding_setups').select('*').eq('business_id', business.id).single(),
-      supabase.from('call_routing_rules').select('*').eq('business_id', business.id).single(),
-      supabase.from('webhook_status').select('*').eq('business_id', business.id),
-      supabase.from('provider_connections').select('provider, mode, status').eq('business_id', business.id).eq('provider', 'twilio').single(),
-      supabase.from('customer_usage_summary').select('*').eq('business_id', business.id).order('period_start', { ascending: false }).limit(1).single()
-    ]);
+  const [
+    { data: numbers },
+    { data: voiceSettings },
+    { data: forwarding },
+    { data: routing },
+    { data: webhookStatuses },
+    { data: twilioConn },
+    { data: usage },
+    { data: employeeSettings },
+    { count: openGapCount }
+  ] = await Promise.all([
+    supabase.from('phone_numbers').select('*').eq('business_id', business.id).neq('status', 'released'),
+    supabase.from('business_voice_settings').select('voice_name, voice_provider').eq('business_id', business.id).single(),
+    supabase.from('forwarding_setups').select('*').eq('business_id', business.id).single(),
+    supabase.from('call_routing_rules').select('*').eq('business_id', business.id).single(),
+    supabase.from('webhook_status').select('*').eq('business_id', business.id),
+    supabase.from('provider_connections').select('provider, mode, status').eq('business_id', business.id).eq('provider', 'twilio').single(),
+    supabase.from('customer_usage_summary').select('*').eq('business_id', business.id).order('period_start', { ascending: false }).limit(1).single(),
+    supabase.from('ai_employee_settings').select('employee_name, employee_title, tone').eq('business_id', business.id).single(),
+    supabase.from('knowledge_gaps').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'open')
+  ]);
 
   const activeNumber = numbers?.find((n) => n.status === 'active');
   const vapiWebhook = webhookStatuses?.find((w) => w.webhook_type === 'vapi');
@@ -101,6 +112,18 @@ export default async function PhoneOverviewPage() {
             {usage ? `${usage.used_minutes}/${usage.included_minutes} min · ${usage.used_sms}/${usage.included_sms} SMS` : 'No usage recorded yet'}
           </div>
         </div>
+        <div className="card">
+          <div className="text-xs font-medium text-slate-500 mb-1">AI employee</div>
+          <div className="text-sm font-medium">
+            {employeeSettings ? `${employeeSettings.employee_name} · ${employeeSettings.employee_title}` : 'Ava · Virtual Receptionist (default)'}
+          </div>
+        </div>
+        <div className="card">
+          <div className="text-xs font-medium text-slate-500 mb-1">Waiting on you in Teach Ava</div>
+          <div className="text-sm font-medium">
+            {openGapCount ? <span className="badge-warning">{openGapCount} open question{openGapCount === 1 ? '' : 's'}</span> : <span className="badge-success">All caught up</span>}
+          </div>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3">
@@ -109,6 +132,9 @@ export default async function PhoneOverviewPage() {
         <Link href="/phone/assistant" className="btn-secondary">Assistant settings</Link>
         <Link href="/phone/sms" className="btn-secondary">SMS settings</Link>
         <Link href="/phone/test-center" className="btn-secondary">Test center</Link>
+        <Link href="/teach" className="btn-secondary">Teach Ava</Link>
+        <Link href="/practice" className="btn-secondary">Practice</Link>
+        <Link href="/conversations" className="btn-secondary">Conversations</Link>
       </div>
     </div>
   );

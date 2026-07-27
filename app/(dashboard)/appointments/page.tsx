@@ -16,6 +16,7 @@ export default async function AppointmentsPage() {
         .from('appointments')
         .select('*, leads(name, phone, address)')
         .eq('business_id', business.id)
+        .eq('is_practice', false)
         .order('scheduled_at', { ascending: true })
         .limit(50)
     : { data: [] };

@@ -4,11 +4,13 @@ import { supabaseServer } from '@/lib/supabase/server';
 
 const SERVICE_NAV = [
   { href: '/dashboard', label: 'Dashboard' },
-  { href: '/calls', label: 'Calls & Transcripts' },
+  { href: '/conversations', label: 'Conversations' },
   { href: '/leads', label: 'Leads' },
   { href: '/appointments', label: 'Appointments' },
   { href: '/train-ai', label: 'Train My AI' },
   { href: '/knowledge-base', label: 'Knowledge Base' },
+  { href: '/teach', label: 'Teach Ava' },
+  { href: '/practice', label: 'Practice' },
   { href: '/phone-settings', label: 'Phone Settings' },
   { href: '/calendar', label: 'Calendar' },
   { href: '/settings/voice-language', label: 'Voice & Language' },
@@ -17,11 +19,13 @@ const SERVICE_NAV = [
 
 const RESTAURANT_NAV = [
   { href: '/dashboard', label: 'Dashboard' },
-  { href: '/calls', label: 'Calls & Transcripts' },
+  { href: '/conversations', label: 'Conversations' },
   { href: '/menu', label: 'Menu' },
   { href: '/orders', label: 'Orders' },
   { href: '/restaurant-settings', label: 'Restaurant Settings' },
   { href: '/knowledge-base', label: 'Knowledge Base' },
+  { href: '/teach', label: 'Teach Ava' },
+  { href: '/practice', label: 'Practice' },
   { href: '/phone-settings', label: 'Phone Settings' },
   { href: '/settings/voice-language', label: 'Voice & Language' },
   { href: '/phone', label: 'Phone Management' }
