@@ -1,7 +1,7 @@
 import { supabaseServiceRole } from './supabase/admin';
 import { getVoiceProvider, FALLBACK_VOICE } from './voice';
 import { logger } from './logger';
-import { VAPI_TOOLS } from './vapi-tools';
+import { VAPI_TOOLS, buildSystemPrompt } from './vapi-tools';
 
 const VAPI_API_BASE = 'https://api.vapi.ai';
 
@@ -107,84 +107,170 @@ export async function deleteAssistant(assistantId: string): Promise<void> {
   }
 }
 
-/**
- * Pushes the customer-facing assistant_settings (greeting, first message,
- * language, speaking speed, etc.) to the real Vapi assistant. Called from
- * the Assistant Settings page's Save action.
- */
-export async function syncAssistantSettings(
-  assistantId: string,
-  settings: {
-    name: string;
-    firstMessage?: string | null;
-    language: string;
-    speakingSpeed: number;
-    silenceTimeoutSeconds: number;
-    voicemailBehavior: string;
-    recordCalls: boolean;
+type FieldResult = { expected: unknown; applied: unknown; match: boolean };
+type SyncResult = {
+  ok: boolean;
+  status: 'synced' | 'partial' | 'failed';
+  fieldResults?: Record<string, FieldResult>;
+  error?: string;
+};
+
+/** Flattens a nested config object into dotted-path keys for comparison (arrays are left as leaf values). */
+function flattenConfig(obj: Record<string, any>, prefix = ''): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj ?? {})) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      Object.assign(out, flattenConfig(value, path));
+    } else {
+      out[path] = value;
+    }
   }
-): Promise<{ ok: boolean; error?: string }> {
+  return out;
+}
+
+function compareConfigs(expected: Record<string, any>, applied: Record<string, any>): Record<string, FieldResult> {
+  const flatExpected = flattenConfig(expected);
+  const flatApplied = flattenConfig(applied ?? {});
+  const results: Record<string, FieldResult> = {};
+  for (const [key, expectedValue] of Object.entries(flatExpected)) {
+    const appliedValue = flatApplied[key];
+    results[key] = { expected: expectedValue, applied: appliedValue, match: JSON.stringify(expectedValue) === JSON.stringify(appliedValue) };
+  }
+  return results;
+}
+
+/**
+ * Pushes every supported setting (assistant_settings + business_voice_settings
+ * + the generated system prompt/tools) to the real Vapi assistant, then reads
+ * the assistant back and compares what Vapi actually applied against what
+ * was requested, field by field. An HTTP 200 from the PATCH is never treated
+ * as proof the settings took — 'synced' vs 'partial' vs 'failed' is decided
+ * entirely from the GET response, and every attempt is recorded in
+ * assistant_sync_status (migration 0009) whether it succeeds or not.
+ *
+ * Nested objects (voice, model) are always sent in full, never as a partial
+ * patch — e.g. changing only speaking speed still sends the full voice
+ * object (provider + voiceId + speed), because Vapi's PATCH replaces a
+ * nested object wholesale when the key is present; sending {speed} alone
+ * would silently blank out the provider/voiceId already configured.
+ */
+export async function syncAssistantSettings(businessId: string): Promise<SyncResult> {
+  const supabase = supabaseServiceRole();
+
+  const { data: business } = await supabase
+    .from('businesses')
+    .select('id, name, business_type, service_area, vapi_assistant_id')
+    .eq('id', businessId)
+    .single();
+
+  if (!business?.vapi_assistant_id) {
+    return { ok: false, status: 'failed', error: 'No Vapi assistant provisioned for this business yet.' };
+  }
+
+  const { data: settings } = await supabase.from('assistant_settings').select('*').eq('business_id', businessId).single();
+  const { data: voiceSettings } = await supabase
+    .from('business_voice_settings')
+    .select('voice_provider, voice_id')
+    .eq('business_id', businessId)
+    .single();
+
+  const basePrompt = buildSystemPrompt(business);
+  const fullPrompt = settings?.system_prompt_override ? `${basePrompt}\n\n${settings.system_prompt_override}` : basePrompt;
+
+  const expectedConfig: Record<string, any> = {
+    name: settings?.name ?? `${business.name} Receptionist`,
+    firstMessage: settings?.first_message || `Thanks for calling ${business.name} — how can I help you today?`,
+    model: {
+      provider: 'openai',
+      model: 'gpt-4o',
+      temperature: 0.3,
+      systemPrompt: fullPrompt,
+      functions: VAPI_TOOLS
+    },
+    voice: {
+      provider: voiceSettings?.voice_provider ?? FALLBACK_VOICE.provider,
+      voiceId: voiceSettings?.voice_id ?? FALLBACK_VOICE.voiceId,
+      model: 'eleven_multilingual_v2',
+      speed: settings?.speaking_speed ?? 1.0
+    },
+    silenceTimeoutSeconds: settings?.silence_timeout_seconds ?? 10,
+    maxDurationSeconds: settings?.call_timeout_seconds ?? 1800,
+    recordingEnabled: settings?.record_calls ?? true,
+    transcriber: { language: settings?.language ?? 'en' }
+  };
+
+  if (settings?.voicemail_behavior === 'leave_message' && settings?.first_message) {
+    expectedConfig.voicemailMessage = settings.first_message;
+  }
+
+  const { data: syncRow } = await supabase
+    .from('assistant_sync_status')
+    .insert({ business_id: businessId, vapi_assistant_id: business.vapi_assistant_id, status: 'pending', expected_config: expectedConfig })
+    .select('id')
+    .single();
+
+  async function fail(error: string): Promise<SyncResult> {
+    if (syncRow) {
+      await supabase
+        .from('assistant_sync_status')
+        .update({ status: 'failed', error_message: error, completed_at: new Date().toISOString() })
+        .eq('id', syncRow.id);
+    }
+    return { ok: false, status: 'failed', error };
+  }
+
   try {
-    const res = await fetch(`${VAPI_API_BASE}/assistant/${assistantId}`, {
+    const patchRes = await fetch(`${VAPI_API_BASE}/assistant/${business.vapi_assistant_id}`, {
       method: 'PATCH',
       headers: vapiHeaders(),
-      body: JSON.stringify({
-        name: settings.name,
-        firstMessage: settings.firstMessage ?? undefined,
-        voicemailMessage: settings.voicemailBehavior === 'leave_message' ? settings.firstMessage : undefined,
-        silenceTimeoutSeconds: settings.silenceTimeoutSeconds,
-        recordingEnabled: settings.recordCalls,
-        transcriber: { language: settings.language }
-      })
+      body: JSON.stringify(expectedConfig)
     });
-    if (!res.ok) return { ok: false, error: `Vapi update failed: ${res.status} ${await res.text()}` };
-    return { ok: true };
+
+    if (!patchRes.ok) {
+      return fail(`Vapi update failed: ${patchRes.status} ${await patchRes.text()}`);
+    }
+
+    // Never trust the PATCH's 200 alone — read the assistant back and
+    // compare what was actually applied.
+    const getRes = await fetch(`${VAPI_API_BASE}/assistant/${business.vapi_assistant_id}`, { headers: vapiHeaders() });
+    if (!getRes.ok) {
+      return fail(`Settings were sent, but could not be read back to verify: ${getRes.status} ${await getRes.text()}`);
+    }
+
+    const applied = await getRes.json();
+    const fieldResults = compareConfigs(expectedConfig, applied);
+    const matches = Object.values(fieldResults).map((f) => f.match);
+    const status: SyncResult['status'] = matches.every(Boolean) ? 'synced' : matches.some(Boolean) ? 'partial' : 'failed';
+
+    if (syncRow) {
+      await supabase
+        .from('assistant_sync_status')
+        .update({ status, applied_config: applied, field_results: fieldResults, completed_at: new Date().toISOString() })
+        .eq('id', syncRow.id);
+    }
+
+    return { ok: status !== 'failed', status, fieldResults };
   } catch (err: any) {
-    logger.error('vapi_sync_assistant_settings_failed', { assistantId, message: err.message });
-    return { ok: false, error: err.message ?? 'Could not reach Vapi' };
+    logger.error('vapi_sync_assistant_settings_failed', { businessId, message: err.message });
+    return fail(err.message ?? 'Could not reach Vapi');
   }
 }
 
 /**
- * Pushes the business's currently saved voice settings to its provisioned
- * Vapi assistant, so the change takes effect on the very next call. Call
- * this after saving to business_voice_settings.
- *
- * Requires businesses.vapi_assistant_id to be set, OR falls back to the
- * deployment-wide VAPI_ASSISTANT_ID env var — useful for staging/testing
- * with a single shared assistant before per-business provisioning exists.
- *
- * Before syncing, this re-checks the voice against the live provider
- * catalog. If it's no longer available (deleted, renamed, account changed),
- * it automatically substitutes FALLBACK_VOICE and updates
+ * Re-checks the business's saved voice against the live provider catalog
+ * before syncing. If it's no longer available (deleted, renamed, account
+ * changed), automatically substitutes FALLBACK_VOICE and updates
  * business_voice_settings to match, so a call is never left without a
- * valid voice configured.
+ * valid voice configured. Then delegates the actual push-and-verify to
+ * syncAssistantSettings(), which sends the full voice object (provider +
+ * voiceId + speed) rather than a partial one — call this after saving to
+ * business_voice_settings.
  */
 export async function syncAssistantVoice(
   businessId: string
 ): Promise<{ ok: boolean; error?: string; usedFallback?: boolean }> {
   const supabase = supabaseServiceRole();
-
-  let assistantId: string | undefined;
-  try {
-    const { data: business, error } = await supabase
-      .from('businesses')
-      .select('vapi_assistant_id')
-      .eq('id', businessId)
-      .single();
-    if (error) throw error;
-    assistantId = business?.vapi_assistant_id ?? process.env.VAPI_ASSISTANT_ID;
-  } catch (err: any) {
-    logger.error('vapi_sync_supabase_lookup_failed', { businessId, message: err.message });
-    return { ok: false, error: 'Could not look up the business record.' };
-  }
-
-  if (!assistantId) {
-    return {
-      ok: false,
-      error: 'No Vapi assistant provisioned for this business yet, and no VAPI_ASSISTANT_ID fallback is set.'
-    };
-  }
 
   let voiceSettings: { voice_provider: string; voice_id: string } | null = null;
   try {
@@ -204,7 +290,7 @@ export async function syncAssistantVoice(
     return { ok: false, error: 'No voice settings saved yet.' };
   }
 
-  let { voice_provider: provider, voice_id: voiceId } = voiceSettings;
+  const { voice_provider: provider, voice_id: voiceId } = voiceSettings;
   let usedFallback = false;
 
   try {
@@ -212,14 +298,11 @@ export async function syncAssistantVoice(
     const catalog = await liveProvider.listVoices();
     const stillExists = catalog.some((v) => v.id === voiceId);
     if (!stillExists) {
-      const previousVoiceId = voiceId;
-      provider = FALLBACK_VOICE.provider;
-      voiceId = FALLBACK_VOICE.voiceId;
       usedFallback = true;
-      logger.warn('vapi_sync_voice_fallback_used', { businessId, previousVoiceId });
+      logger.warn('vapi_sync_voice_fallback_used', { businessId, previousVoiceId: voiceId });
       await supabase
         .from('business_voice_settings')
-        .update({ voice_provider: provider, voice_id: voiceId, voice_name: 'Fallback voice' })
+        .update({ voice_provider: FALLBACK_VOICE.provider, voice_id: FALLBACK_VOICE.voiceId, voice_name: 'Fallback voice' })
         .eq('business_id', businessId);
     }
   } catch (err: any) {
@@ -228,31 +311,6 @@ export async function syncAssistantVoice(
     logger.warn('vapi_sync_catalog_check_failed', { businessId, message: err.message });
   }
 
-  try {
-    const res = await fetch(`${VAPI_API_BASE}/assistant/${assistantId}`, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${process.env.VAPI_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        voice: {
-          provider,
-          voiceId,
-          model: 'eleven_multilingual_v2' // ignored by vendors that don't use it; keeps multilingual playback for 11labs
-        }
-      })
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      logger.error('vapi_sync_patch_failed', { businessId, status: res.status });
-      return { ok: false, error: `Vapi update failed: ${res.status} ${text}` };
-    }
-
-    return { ok: true, usedFallback };
-  } catch (err: any) {
-    logger.error('vapi_sync_network_error', { businessId, message: err.message });
-    return { ok: false, error: 'Could not reach Vapi — check network connectivity and VAPI_API_KEY.' };
-  }
+  const result = await syncAssistantSettings(businessId);
+  return { ok: result.ok, error: result.error, usedFallback };
 }

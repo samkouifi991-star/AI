@@ -25,6 +25,7 @@ export default function AssistantSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<string | null>(null);
+  const [mismatches, setMismatches] = useState<string[]>([]);
 
   useEffect(() => {
     async function load() {
@@ -57,6 +58,7 @@ export default function AssistantSettingsPage() {
   async function save() {
     setSaving(true);
     setSaveResult(null);
+    setMismatches([]);
     const res = await fetch('/api/phone/assistant-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -64,7 +66,20 @@ export default function AssistantSettingsPage() {
     });
     const data = await res.json();
     setSaving(false);
-    setSaveResult(data.synced ? 'Saved and synced to your live assistant.' : data.note ?? data.syncError ?? 'Saved.');
+
+    if (data.note) {
+      setSaveResult(data.note);
+    } else if (data.syncStatus === 'synced') {
+      setSaveResult('Saved and confirmed on your live assistant — read back from Vapi and every field matched.');
+    } else if (data.syncStatus === 'partial') {
+      setSaveResult('Saved, but only some settings were confirmed applied — see below.');
+      const failed = Object.entries(data.fieldResults ?? {})
+        .filter(([, v]: any) => !v.match)
+        .map(([k]) => k);
+      setMismatches(failed);
+    } else {
+      setSaveResult(data.syncError ?? 'Saved, but syncing to the live assistant failed.');
+    }
   }
 
   if (loading) return <div className="card max-w-2xl">Loading…</div>;
@@ -76,7 +91,18 @@ export default function AssistantSettingsPage() {
         <p className="text-slate-600 text-sm">How your AI receptionist introduces itself and behaves on calls.</p>
       </div>
 
-      {saveResult && <div className="text-sm text-success bg-green-50 rounded-lg px-3 py-2">{saveResult}</div>}
+      {saveResult && (
+        <div className={mismatches.length ? 'text-sm text-warning bg-amber-50 rounded-lg px-3 py-2' : 'text-sm text-success bg-green-50 rounded-lg px-3 py-2'}>
+          {saveResult}
+          {mismatches.length > 0 && (
+            <ul className="list-disc list-inside mt-1 text-xs">
+              {mismatches.map((f) => (
+                <li key={f}>{f} did not apply as requested</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <section className="card space-y-3">
         <div>

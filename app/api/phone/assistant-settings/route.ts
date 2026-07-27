@@ -56,16 +56,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, synced: false, note: 'Saved. No phone number provisioned yet, so nothing to sync to live calls until one is.' });
   }
 
-  const sync = await syncAssistantSettings(business.vapi_assistant_id, {
-    name: body.name,
-    firstMessage: body.firstMessage,
-    language: body.language,
-    speakingSpeed: body.speakingSpeed,
-    silenceTimeoutSeconds: body.silenceTimeoutSeconds,
-    voicemailBehavior: body.voicemailBehavior,
-    recordCalls: !!body.recordCalls
-  });
+  const sync = await syncAssistantSettings(business.id);
 
-  if (!sync.ok) return NextResponse.json({ ok: true, synced: false, syncError: sync.error });
-  return NextResponse.json({ ok: true, synced: true });
+  // status is reported honestly, distinct from a bare true/false: 'partial'
+  // means the PATCH succeeded but the read-back caught fields that didn't
+  // actually apply — never collapsed into a plain "synced".
+  return NextResponse.json({
+    ok: true,
+    synced: sync.status === 'synced',
+    syncStatus: sync.status,
+    fieldResults: sync.fieldResults,
+    syncError: sync.error
+  });
 }
