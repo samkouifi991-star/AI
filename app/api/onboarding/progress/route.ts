@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     // and confirmed via Vapi read-back before ever setting is_live.
     const readiness = await verifyReadyForLive(businessId);
     if (readiness.ready) {
-      await supabase.from('businesses').update({ is_live: true }).eq('id', businessId);
+      await supabase.from('businesses').update({ is_live: true, provisioning_state: 'live' }).eq('id', businessId);
       await logAudit({ businessId, actorUserId: user?.id, action: 'business_went_live' });
       return NextResponse.json({ ok: true, isLive: true });
     }

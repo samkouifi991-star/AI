@@ -8,7 +8,7 @@ export default async function PhoneOverviewPage() {
   } = await supabase.auth.getUser();
   const { data: business } = await supabase
     .from('businesses')
-    .select('id, name, phone_number, ai_phone_number, vapi_assistant_id')
+    .select('id, name, phone_number, ai_phone_number, vapi_assistant_id, provisioning_state, provisioning_error_message, twilio_subaccount_sid')
     .eq('owner_user_id', user?.id)
     .single();
 
@@ -45,11 +45,31 @@ export default async function PhoneOverviewPage() {
   const numberConnected = Boolean(activeNumber?.phone_number ?? business.ai_phone_number);
   const assistantReady = Boolean(business.vapi_assistant_id) && twilioConn?.status === 'connected';
 
-  const summary = !numberConnected
-    ? { label: 'Your number still needs an assistant', tone: 'badge-warning' }
-    : !assistantReady
-    ? { label: 'Your phone is connected — finishing setup', tone: 'badge-warning' }
-    : { label: 'Your AI employee is ready', tone: 'badge-success' };
+  // provisioning_state (migration 0014) is the authoritative plain-language
+  // status once a provisioning workflow has run at least once; older
+  // businesses without it yet fall back to the connectivity heuristic below.
+  const PROVISIONING_LABELS: Record<string, { label: string; tone: string }> = {
+    account_created: { label: 'Getting started', tone: 'badge-warning' },
+    profile_incomplete: { label: 'Finish your business profile to continue', tone: 'badge-warning' },
+    waiting_for_phone_selection: { label: 'Choose a phone number to continue', tone: 'badge-warning' },
+    purchasing_number: { label: 'Setting up your phone number…', tone: 'badge-warning' },
+    creating_ai_employee: { label: 'Creating your AI employee…', tone: 'badge-warning' },
+    connecting_phone: { label: 'Connecting your phone number…', tone: 'badge-warning' },
+    syncing_settings: { label: 'Applying your settings…', tone: 'badge-warning' },
+    processing_knowledge: { label: 'Learning your menu and policies…', tone: 'badge-warning' },
+    ready_for_test: { label: 'Ready for a test call', tone: 'badge-success' },
+    live: { label: 'Your AI employee is ready', tone: 'badge-success' },
+    failed: { label: 'Setup needs attention', tone: 'badge-danger' }
+  };
+
+  const summary =
+    business.provisioning_state && PROVISIONING_LABELS[business.provisioning_state]
+      ? PROVISIONING_LABELS[business.provisioning_state]
+      : !numberConnected
+      ? { label: 'Your number still needs an assistant', tone: 'badge-warning' }
+      : !assistantReady
+      ? { label: 'Your phone is connected — finishing setup', tone: 'badge-warning' }
+      : { label: 'Your AI employee is ready', tone: 'badge-success' };
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -146,7 +166,12 @@ export default async function PhoneOverviewPage() {
           <div>Vapi assistant ID: <span className="font-mono">{business.vapi_assistant_id ?? 'none'}</span></div>
           <div>Vapi phone number ID: <span className="font-mono">{activeNumber?.vapi_phone_number_id ?? 'none'}</span></div>
           <div>Twilio SID: <span className="font-mono">{activeNumber?.twilio_sid ?? 'none'}</span></div>
+          <div>Twilio subaccount SID: <span className="font-mono">{business.twilio_subaccount_sid ?? 'none'}</span></div>
           <div>Twilio connection mode: <span className="font-mono">{twilioConn?.mode ?? 'none'}</span></div>
+          <div>Provisioning state: <span className="font-mono">{business.provisioning_state ?? 'unknown'}</span></div>
+          {business.provisioning_error_message && (
+            <div>Last provisioning error: <span className="font-mono">{business.provisioning_error_message}</span></div>
+          )}
         </div>
       </details>
     </div>

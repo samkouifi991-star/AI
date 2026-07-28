@@ -19,6 +19,42 @@ export function twilioClientForConnection(accountSid: string, encryptedAuthToken
   return twilio(accountSid, authToken);
 }
 
+/**
+ * Creates a Twilio subaccount under the platform master account for one
+ * business. This is what makes per-business number isolation a provider-
+ * level guarantee: the subaccount has its own auth token and its own
+ * number inventory, so purchasing/releasing/listing numbers for business A
+ * can never touch business B's numbers even if application code has a bug.
+ * Returns the subaccount's own SID and (plaintext, caller must encrypt
+ * before persisting) auth token — Twilio only returns the auth token at
+ * creation time, so callers must store it immediately.
+ */
+export async function createSubaccount(friendlyName: string, client = twilioClient()) {
+  const account = await client.api.v2010.accounts.create({ friendlyName });
+  return { subaccountSid: account.sid, subaccountAuthToken: account.authToken };
+}
+
+/**
+ * Builds a client scoped to a business's own subaccount, decrypting the
+ * stored subaccount auth token only at the moment of use.
+ */
+export function twilioClientForSubaccount(subaccountSid: string, encryptedAuthToken: string) {
+  const authToken = decryptSecret(encryptedAuthToken);
+  return twilio(subaccountSid, authToken);
+}
+
+/**
+ * Suspends (closes) a business's subaccount as part of account deletion.
+ * Twilio subaccounts cannot be hard-deleted via the API — 'closed' is the
+ * terminal, billing-stopped state. Any numbers still attached must be
+ * released first (Twilio refuses to close a subaccount with active
+ * numbers), which the deletion flow does explicitly and only on the
+ * customer's confirmed choice.
+ */
+export async function closeSubaccount(subaccountSid: string, client = twilioClient()) {
+  await client.api.v2010.accounts(subaccountSid).update({ status: 'closed' });
+}
+
 export interface NumberSearchParams {
   country?: string;         // ISO country code, e.g. 'US'
   areaCode?: string;
