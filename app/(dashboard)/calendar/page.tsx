@@ -31,7 +31,13 @@ export default async function CalendarPage({
       {searchParams.connected && (
         <div className="text-sm text-success bg-green-50 rounded-lg px-3 py-2">Google Calendar connected.</div>
       )}
-      {searchParams.error && (
+      {searchParams.error === 'google_not_configured' && (
+        <div className="text-sm text-danger bg-red-50 rounded-lg px-3 py-2">
+          Google Calendar isn&apos;t set up on this deployment yet — GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or
+          GOOGLE_REDIRECT_URI is missing from the server environment. Contact support or check your deployment settings.
+        </div>
+      )}
+      {searchParams.error && searchParams.error !== 'google_not_configured' && (
         <div className="text-sm text-danger bg-red-50 rounded-lg px-3 py-2">Something went wrong connecting your calendar.</div>
       )}
 
