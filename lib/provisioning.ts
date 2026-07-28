@@ -124,6 +124,7 @@ export async function runBuyNumberWorkflow(params: {
   if (!assistantId) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
     const created = await createAssistant({
+      businessId: params.businessId,
       name: `${business.name} Receptionist`,
       systemPrompt: buildSystemPrompt(business),
       firstMessage: `Thanks for calling ${business.name} — how can I help you today?`,
@@ -159,6 +160,7 @@ export async function runBuyNumberWorkflow(params: {
 
   // Import the number into Vapi so it actually rings the assistant
   const imported = await importTwilioNumberToVapi({
+    businessId: params.businessId,
     twilioAccountSid: process.env.TWILIO_ACCOUNT_SID!,
     twilioAuthToken: process.env.TWILIO_AUTH_TOKEN!,
     twilioPhoneNumber: params.phoneNumber,
@@ -262,6 +264,7 @@ export async function runImportByoNumberWorkflow(params: {
   if (!assistantId) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
     const created = await createAssistant({
+      businessId: params.businessId,
       name: `${business.name} Receptionist`,
       systemPrompt: buildSystemPrompt(business),
       firstMessage: `Thanks for calling ${business.name} — how can I help you today?`,
@@ -301,6 +304,7 @@ export async function runImportByoNumberWorkflow(params: {
   const authTokenPlain = decryptSecret(params.encryptedAuthToken);
 
   const imported = await importTwilioNumberToVapi({
+    businessId: params.businessId,
     twilioAccountSid: params.twilioAccountSid,
     twilioAuthToken: authTokenPlain,
     twilioPhoneNumber: params.phoneNumber,

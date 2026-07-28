@@ -16,6 +16,7 @@ function vapiHeaders() {
  * already exists. Returns the real Vapi assistant id.
  */
 export async function createAssistant(params: {
+  businessId: string;
   name: string;
   systemPrompt: string;
   firstMessage: string;
@@ -31,6 +32,12 @@ export async function createAssistant(params: {
       body: JSON.stringify({
         name: params.name,
         firstMessage: params.firstMessage,
+        // Attached to every call this assistant handles as call.metadata —
+        // this is how the webhook (app/api/vapi/webhook/route.ts) knows
+        // which business a live call belongs to. Previously never sent,
+        // which meant call.metadata.businessId was always undefined and
+        // every tool call failed with "Missing business context."
+        metadata: { businessId: params.businessId },
         model: {
           provider: 'openai',
           model: 'gpt-4o',
@@ -61,6 +68,7 @@ export async function createAssistant(params: {
  * outside the encrypted column.
  */
 export async function importTwilioNumberToVapi(params: {
+  businessId: string;
   twilioAccountSid: string;
   twilioAuthToken: string;
   twilioPhoneNumber: string;
@@ -75,7 +83,11 @@ export async function importTwilioNumberToVapi(params: {
         number: params.twilioPhoneNumber,
         twilioAccountSid: params.twilioAccountSid,
         twilioAuthToken: params.twilioAuthToken,
-        assistantId: params.assistantId
+        assistantId: params.assistantId,
+        // Same reasoning as createAssistant()'s metadata — belt-and-suspenders
+        // in case Vapi sources call.metadata from the phone-number resource
+        // rather than (or in addition to) the assistant resource.
+        metadata: { businessId: params.businessId }
       })
     });
     if (!res.ok) return { error: `Vapi phone import failed: ${res.status} ${await res.text()}` };

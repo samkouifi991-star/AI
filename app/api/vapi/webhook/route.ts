@@ -19,6 +19,37 @@ function verifyWebhookSecret(req: NextRequest): boolean {
   return provided === process.env.VAPI_WEBHOOK_SECRET;
 }
 
+/**
+ * Resolves which business a live call belongs to. call.metadata.businessId
+ * (set by lib/vapi-assistant.ts at assistant/phone-number creation time) is
+ * the primary source, but this always falls back to looking the called
+ * number up directly in our own phone_numbers/businesses tables — data we
+ * control — rather than depending entirely on Vapi propagating metadata
+ * correctly. A call is never dropped just because metadata came back empty.
+ */
+async function resolveBusinessId(call: any, supabase: ReturnType<typeof supabaseServiceRole>): Promise<string | null> {
+  const fromMetadata: string | undefined = call?.metadata?.businessId;
+  if (fromMetadata) return fromMetadata;
+
+  const dialedNumber: string | undefined = call?.phoneNumber?.number;
+  if (!dialedNumber) return null;
+
+  const { data: phoneRow } = await supabase
+    .from('phone_numbers')
+    .select('business_id')
+    .eq('phone_number', dialedNumber)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (phoneRow?.business_id) return phoneRow.business_id;
+
+  const { data: businessRow } = await supabase
+    .from('businesses')
+    .select('id')
+    .eq('ai_phone_number', dialedNumber)
+    .maybeSingle();
+  return businessRow?.id ?? null;
+}
+
 export async function POST(req: NextRequest) {
   if (!verifyWebhookSecret(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -30,18 +61,18 @@ export async function POST(req: NextRequest) {
 
   // Vapi sends { message: { type: 'function-call' | 'end-of-call-report' | ..., ... } }
   const message = body.message ?? body;
-  const businessIdForStatus: string | undefined = message?.call?.metadata?.businessId;
+  const businessId = await resolveBusinessId(message?.call, supabase);
 
-  const dedup = await checkDuplicateWebhook(rawBody, message.type ?? 'unknown', businessIdForStatus ?? null);
+  const dedup = await checkDuplicateWebhook(rawBody, message.type ?? 'unknown', businessId);
   if (dedup.isDuplicate) {
     return NextResponse.json(dedup.response.body, { status: dedup.response.status ?? 200 });
   }
 
-  if (businessIdForStatus) {
+  if (businessId) {
     await supabase
       .from('webhook_status')
       .upsert(
-        { business_id: businessIdForStatus, webhook_type: 'vapi', last_received_at: new Date().toISOString(), last_status: 'ok', failure_count: 0 },
+        { business_id: businessId, webhook_type: 'vapi', last_received_at: new Date().toISOString(), last_status: 'ok', failure_count: 0 },
         { onConflict: 'business_id,webhook_type' }
       );
   }
@@ -51,13 +82,13 @@ export async function POST(req: NextRequest) {
 
   switch (message.type) {
     case 'function-call': {
-      const outcome = await handleFunctionCall(message, supabase);
+      const outcome = await handleFunctionCall(message, businessId, supabase);
       status = outcome.status;
       responseBody = outcome.body;
       break;
     }
     case 'end-of-call-report': {
-      const outcome = await handleEndOfCall(message, supabase);
+      const outcome = await handleEndOfCall(message, businessId, supabase);
       status = outcome.status;
       responseBody = outcome.body;
       break;
@@ -72,12 +103,12 @@ export async function POST(req: NextRequest) {
 
 async function handleFunctionCall(
   message: any,
+  businessId: string | null,
   supabase: ReturnType<typeof supabaseServiceRole>
 ): Promise<{ status: number; body: any }> {
   const { functionCall, call } = message;
   const name: string = functionCall?.name;
   const params = functionCall?.parameters ?? {};
-  const businessId: string = call?.metadata?.businessId;
   const callRowId: string | undefined = call?.metadata?.callRowId;
 
   if (!businessId) {
@@ -90,10 +121,10 @@ async function handleFunctionCall(
 
 async function handleEndOfCall(
   message: any,
+  businessId: string | null,
   supabase: ReturnType<typeof supabaseServiceRole>
 ): Promise<{ status: number; body: any }> {
   const { call, transcript, recordingUrl, summary } = message;
-  const businessId: string = call?.metadata?.businessId;
   const callRowId: string = call?.metadata?.callRowId;
 
   if (!businessId) return { status: 200, body: { ok: true } };
