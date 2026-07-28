@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabase/client';
 
@@ -42,7 +42,11 @@ export default function OnboardingWizard() {
 
   // Stage: voice
   const [voices, setVoices] = useState<any[]>([]);
+  const [voiceProviderKey, setVoiceProviderKey] = useState('elevenlabs');
   const [selectedVoice, setSelectedVoice] = useState<any>(null);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Stage: calendar
   const [calendarConnected, setCalendarConnected] = useState(false);
@@ -187,8 +191,41 @@ export default function OnboardingWizard() {
     if (stage !== 'voice' || voices.length > 0) return;
     fetch('/api/voice/list')
       .then((r) => r.json())
-      .then((d) => setVoices(d.voices ?? []));
+      .then((d) => {
+        setVoices(d.voices ?? []);
+        if (d.provider) setVoiceProviderKey(d.provider);
+      });
   }, [stage, voices.length]);
+
+  async function playVoicePreview(voice: any) {
+    setPreviewError(null);
+    setPreviewingId(voice.id);
+    try {
+      if (voice.previewUrl) {
+        if (audioRef.current) {
+          audioRef.current.src = voice.previewUrl;
+          await audioRef.current.play();
+        }
+      } else {
+        const res = await fetch('/api/voice/preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: voiceProviderKey, voiceId: voice.id })
+        });
+        if (!res.ok) throw new Error('Preview failed');
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        if (audioRef.current) {
+          audioRef.current.src = objectUrl;
+          await audioRef.current.play();
+        }
+      }
+    } catch {
+      setPreviewError('Could not play that preview.');
+    } finally {
+      setPreviewingId(null);
+    }
+  }
 
   async function saveVoice() {
     if (!businessId || !selectedVoice) return;
@@ -308,13 +345,38 @@ export default function OnboardingWizard() {
       {stage === 'voice' && (
         <section className="card space-y-3">
           <h2 className="font-display text-lg font-semibold">Choose your AI&apos;s voice</h2>
+          <p className="text-xs text-slate-500">Listen to a sample before choosing — nothing is saved until you pick Select.</p>
+          <audio ref={audioRef} className="hidden" />
+          {previewError && <div className="text-xs text-danger">{previewError}</div>}
           <div className="grid sm:grid-cols-2 gap-2">
-            {voices.map((v) => (
-              <button key={v.id} onClick={() => setSelectedVoice(v)} className={`text-left border rounded-lg p-2 ${selectedVoice?.id === v.id ? 'border-brand-500 bg-brand-50' : 'border-slate-200'}`}>
-                <div className="text-sm font-medium">{v.name}</div>
-                <div className="text-xs text-slate-500">{[v.gender, v.accent, v.style].filter(Boolean).join(' · ')}</div>
-              </button>
-            ))}
+            {voices.map((v) => {
+              const active = selectedVoice?.id === v.id;
+              return (
+                <div key={v.id} className={`border rounded-lg p-2 flex items-center justify-between gap-2 ${active ? 'border-brand-500 bg-brand-50' : 'border-slate-200'}`}>
+                  <div>
+                    <div className="text-sm font-medium">{v.name}</div>
+                    <div className="text-xs text-slate-500">{[v.gender, v.accent, v.style].filter(Boolean).join(' · ')}</div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs px-2 py-1"
+                      onClick={() => playVoicePreview(v)}
+                      disabled={previewingId === v.id}
+                    >
+                      {previewingId === v.id ? 'Loading…' : 'Preview'}
+                    </button>
+                    <button
+                      type="button"
+                      className={active ? 'btn-primary text-xs px-2 py-1' : 'btn-secondary text-xs px-2 py-1'}
+                      onClick={() => setSelectedVoice(v)}
+                    >
+                      {active ? 'Selected' : 'Select'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
           <button className="btn-primary" onClick={saveVoice} disabled={!selectedVoice || saving}>{saving ? 'Saving…' : 'Save and continue'}</button>
         </section>
