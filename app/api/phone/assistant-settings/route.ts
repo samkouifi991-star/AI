@@ -17,7 +17,15 @@ export async function GET() {
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { data: settings } = await supabase.from('assistant_settings').select('*').eq('business_id', business.id).single();
-  return NextResponse.json({ settings: settings ?? null });
+  const { data: lastSync } = await supabase
+    .from('assistant_sync_status')
+    .select('status, vapi_assistant_id, requested_at, completed_at, error_message')
+    .eq('business_id', business.id)
+    .order('requested_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return NextResponse.json({ settings: settings ?? null, lastSync: lastSync ?? null });
 }
 
 export async function POST(req: NextRequest) {
@@ -32,7 +40,6 @@ export async function POST(req: NextRequest) {
       business_id: business.id,
       vapi_assistant_id: business.vapi_assistant_id,
       name: body.name,
-      greeting: body.greeting,
       first_message: body.firstMessage,
       system_prompt_override: body.systemPromptOverride ?? null,
       language: body.language,
@@ -52,10 +59,11 @@ export async function POST(req: NextRequest) {
   );
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  if (!business.vapi_assistant_id) {
-    return NextResponse.json({ ok: true, synced: false, note: 'Saved. No phone number provisioned yet, so nothing to sync to live calls until one is.' });
-  }
-
+  // Always attempt a sync — syncAssistantSettings resolves the real
+  // assistant via the phone number's live Vapi mapping, not just
+  // businesses.vapi_assistant_id, so it can succeed even if that column is
+  // stale or was never set. Only "not provisioned at all" (no phone number,
+  // no assistant anywhere) comes back as a real failure.
   const sync = await syncAssistantSettings(business.id);
 
   // status is reported honestly, distinct from a bare true/false: 'partial'
@@ -65,6 +73,8 @@ export async function POST(req: NextRequest) {
     ok: true,
     synced: sync.status === 'synced',
     syncStatus: sync.status,
+    assistantId: sync.assistantId,
+    mappingCorrected: sync.mappingCorrected,
     fieldResults: sync.fieldResults,
     syncError: sync.error
   });

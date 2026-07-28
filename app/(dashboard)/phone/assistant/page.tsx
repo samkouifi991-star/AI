@@ -5,7 +5,6 @@ import PhoneSubNav from '../PhoneSubNav';
 
 const DEFAULTS = {
   name: 'AI Receptionist',
-  greeting: '',
   firstMessage: '',
   systemPromptOverride: '',
   language: 'en',
@@ -21,40 +20,80 @@ const DEFAULTS = {
   advancedModeEnabled: false
 };
 
+type LastSync = {
+  status: 'pending' | 'synced' | 'partial' | 'failed';
+  vapi_assistant_id: string | null;
+  requested_at: string;
+  completed_at: string | null;
+  error_message: string | null;
+} | null;
+
+function statusBadge(lastSync: LastSync): { label: string; className: string } {
+  if (!lastSync) return { label: 'Not provisioned', className: 'badge-warning' };
+  if (lastSync.status === 'synced') return { label: 'Live in Vapi', className: 'badge-success' };
+  if (lastSync.status === 'partial') return { label: 'Partially synced', className: 'badge-warning' };
+  if (lastSync.status === 'pending') return { label: 'Syncing…', className: 'badge-warning' };
+  if (lastSync.error_message?.toLowerCase().includes('no active phone number')) {
+    return { label: 'Not provisioned', className: 'badge-warning' };
+  }
+  return { label: 'Failed', className: 'badge-danger' };
+}
+
 export default function AssistantSettingsPage() {
   const [settings, setSettings] = useState(DEFAULTS);
+  const [lastSync, setLastSync] = useState<LastSync>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [repairing, setRepairing] = useState(false);
   const [saveResult, setSaveResult] = useState<string | null>(null);
   const [mismatches, setMismatches] = useState<string[]>([]);
 
-  useEffect(() => {
-    async function load() {
-      const res = await fetch('/api/phone/assistant-settings');
-      const data = await res.json();
-      if (data.settings) {
-        setSettings({
-          name: data.settings.name,
-          greeting: data.settings.greeting ?? '',
-          firstMessage: data.settings.first_message ?? '',
-          systemPromptOverride: data.settings.system_prompt_override ?? '',
-          language: data.settings.language,
-          fallbackLanguage: data.settings.fallback_language ?? '',
-          speakingSpeed: data.settings.speaking_speed,
-          interruptionSensitivity: data.settings.interruption_sensitivity,
-          silenceTimeoutSeconds: data.settings.silence_timeout_seconds,
-          callTimeoutSeconds: data.settings.call_timeout_seconds,
-          voicemailBehavior: data.settings.voicemail_behavior,
-          recordCalls: data.settings.record_calls,
-          collectTranscripts: data.settings.collect_transcripts,
-          generateSummaries: data.settings.generate_summaries,
-          advancedModeEnabled: data.settings.advanced_mode_enabled
-        });
-      }
-      setLoading(false);
+  async function load() {
+    const res = await fetch('/api/phone/assistant-settings');
+    const data = await res.json();
+    if (data.settings) {
+      setSettings({
+        name: data.settings.name,
+        firstMessage: data.settings.first_message ?? '',
+        systemPromptOverride: data.settings.system_prompt_override ?? '',
+        language: data.settings.language,
+        fallbackLanguage: data.settings.fallback_language ?? '',
+        speakingSpeed: data.settings.speaking_speed,
+        interruptionSensitivity: data.settings.interruption_sensitivity,
+        silenceTimeoutSeconds: data.settings.silence_timeout_seconds,
+        callTimeoutSeconds: data.settings.call_timeout_seconds,
+        voicemailBehavior: data.settings.voicemail_behavior,
+        recordCalls: data.settings.record_calls,
+        collectTranscripts: data.settings.collect_transcripts,
+        generateSummaries: data.settings.generate_summaries,
+        advancedModeEnabled: data.settings.advanced_mode_enabled
+      });
     }
+    setLastSync(data.lastSync ?? null);
+    setLoading(false);
+  }
+
+  useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function applySyncResult(data: any) {
+    if (data.syncStatus === 'synced') {
+      setSaveResult(
+        data.mappingCorrected
+          ? 'Confirmed live in Vapi — the assistant mapping was out of date and has been corrected automatically.'
+          : 'Confirmed live in Vapi — read back and every field matched.'
+      );
+      setMismatches([]);
+    } else if (data.syncStatus === 'partial') {
+      setSaveResult('Only some settings were confirmed applied — see below.');
+      setMismatches(Object.entries(data.fieldResults ?? {}).filter(([, v]: any) => !v.match).map(([k]) => k));
+    } else {
+      setSaveResult(data.syncError ?? 'Sync to the live assistant failed.');
+      setMismatches([]);
+    }
+  }
 
   async function save() {
     setSaving(true);
@@ -67,29 +106,33 @@ export default function AssistantSettingsPage() {
     });
     const data = await res.json();
     setSaving(false);
+    applySyncResult(data);
+    await load();
+  }
 
-    if (data.note) {
-      setSaveResult(data.note);
-    } else if (data.syncStatus === 'synced') {
-      setSaveResult('Saved and confirmed on your live assistant — read back from Vapi and every field matched.');
-    } else if (data.syncStatus === 'partial') {
-      setSaveResult('Saved, but only some settings were confirmed applied — see below.');
-      const failed = Object.entries(data.fieldResults ?? {})
-        .filter(([, v]: any) => !v.match)
-        .map(([k]) => k);
-      setMismatches(failed);
-    } else {
-      setSaveResult(data.syncError ?? 'Saved, but syncing to the live assistant failed.');
-    }
+  async function repair() {
+    setRepairing(true);
+    setSaveResult(null);
+    setMismatches([]);
+    const res = await fetch('/api/phone/assistant-settings/repair', { method: 'POST' });
+    const data = await res.json();
+    setRepairing(false);
+    applySyncResult(data);
+    await load();
   }
 
   if (loading) return <div className="card max-w-2xl">Loading…</div>;
 
+  const badge = statusBadge(lastSync);
+
   return (
     <div className="max-w-2xl space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold mb-1">Assistant settings</h1>
-        <p className="text-slate-600 text-sm">How your AI receptionist introduces itself and behaves on calls.</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="font-display text-2xl font-semibold mb-1">Assistant settings</h1>
+          <p className="text-slate-600 text-sm">How your AI receptionist introduces itself and behaves on calls.</p>
+        </div>
+        <span className={badge.className}>{badge.label}</span>
       </div>
 
       <PhoneSubNav />
@@ -107,17 +150,21 @@ export default function AssistantSettingsPage() {
         </div>
       )}
 
+      {lastSync && (
+        <div className="text-xs text-slate-500">
+          Vapi assistant: <span className="font-mono">{lastSync.vapi_assistant_id ?? 'none'}</span> · last checked{' '}
+          {new Date(lastSync.completed_at ?? lastSync.requested_at).toLocaleString()}
+        </div>
+      )}
+
       <section className="card space-y-3">
         <div>
           <label className="label">Assistant name</label>
           <input className="input" value={settings.name} onChange={(e) => setSettings((s) => ({ ...s, name: e.target.value }))} />
         </div>
         <div>
-          <label className="label">Greeting</label>
-          <textarea className="input" rows={2} value={settings.greeting} onChange={(e) => setSettings((s) => ({ ...s, greeting: e.target.value }))} />
-        </div>
-        <div>
           <label className="label">First message</label>
+          <p className="text-xs text-slate-500 mb-1">The exact sentence Ava speaks when she answers — nothing else overrides this.</p>
           <textarea className="input" rows={2} value={settings.firstMessage} onChange={(e) => setSettings((s) => ({ ...s, firstMessage: e.target.value }))} />
         </div>
       </section>
@@ -192,7 +239,12 @@ export default function AssistantSettingsPage() {
         )}
       </section>
 
-      <button className="btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save assistant settings'}</button>
+      <div className="flex gap-3">
+        <button className="btn-primary" onClick={save} disabled={saving || repairing}>{saving ? 'Saving…' : 'Save assistant settings'}</button>
+        <button className="btn-secondary" onClick={repair} disabled={saving || repairing} title="Re-resolve the correct Vapi assistant and re-verify every field, without changing anything above">
+          {repairing ? 'Checking…' : 'Sync with Vapi / Repair connection'}
+        </button>
+      </div>
     </div>
   );
 }

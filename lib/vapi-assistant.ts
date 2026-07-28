@@ -42,7 +42,7 @@ export async function createAssistant(params: {
           provider: 'openai',
           model: 'gpt-4o',
           temperature: 0.3,
-          systemPrompt: params.systemPrompt,
+          messages: [{ role: 'system', content: params.systemPrompt }],
           functions: VAPI_TOOLS
         },
         voice: { provider: params.voiceProvider, voiceId: params.voiceId, model: 'eleven_multilingual_v2' },
@@ -123,9 +123,75 @@ type FieldResult = { expected: unknown; applied: unknown; match: boolean };
 type SyncResult = {
   ok: boolean;
   status: 'synced' | 'partial' | 'failed';
+  assistantId?: string;
+  mappingCorrected?: boolean;
   fieldResults?: Record<string, FieldResult>;
   error?: string;
 };
+
+type MappingResult =
+  | { ok: true; assistantId: string; source: 'phone_number' | 'business_record'; corrected: boolean }
+  | { ok: false; reason: string };
+
+/**
+ * Determines which Vapi assistant actually answers calls for this business,
+ * treating the phone number's real, live-on-Vapi assistantId as ground
+ * truth rather than trusting businesses.vapi_assistant_id blindly. If the
+ * two disagree (or our record is empty), this adopts whatever Vapi's phone
+ * number is really attached to and corrects our own tables to match —
+ * because a caller getting the wrong assistant is a mapping bug, not a
+ * reason to spin up a duplicate assistant.
+ */
+export async function resolveAssistantMapping(businessId: string): Promise<MappingResult> {
+  const supabase = supabaseServiceRole();
+
+  const { data: business } = await supabase.from('businesses').select('vapi_assistant_id').eq('id', businessId).single();
+  const { data: phoneRow } = await supabase
+    .from('phone_numbers')
+    .select('id, vapi_phone_number_id, vapi_assistant_id')
+    .eq('business_id', businessId)
+    .eq('status', 'active')
+    .maybeSingle();
+
+  if (!phoneRow?.vapi_phone_number_id) {
+    if (business?.vapi_assistant_id) {
+      return { ok: true, assistantId: business.vapi_assistant_id, source: 'business_record', corrected: false };
+    }
+    return { ok: false, reason: 'No active phone number or assistant is provisioned for this business yet.' };
+  }
+
+  try {
+    const res = await fetch(`${VAPI_API_BASE}/phone-number/${phoneRow.vapi_phone_number_id}`, { headers: vapiHeaders() });
+    if (!res.ok) return { ok: false, reason: `Could not read the phone number from Vapi: ${res.status} ${await res.text()}` };
+
+    const data = await res.json();
+    const liveAssistantId: string | undefined = data.assistantId;
+
+    if (!liveAssistantId) {
+      if (business?.vapi_assistant_id) {
+        return { ok: true, assistantId: business.vapi_assistant_id, source: 'business_record', corrected: false };
+      }
+      return { ok: false, reason: 'Vapi reports no assistant attached to this phone number, and none is on record either.' };
+    }
+
+    const corrected = business?.vapi_assistant_id !== liveAssistantId || phoneRow.vapi_assistant_id !== liveAssistantId;
+    if (corrected) {
+      logger.warn('vapi_assistant_mapping_corrected', {
+        businessId,
+        previousBusinessAssistantId: business?.vapi_assistant_id,
+        previousPhoneAssistantId: phoneRow.vapi_assistant_id,
+        liveAssistantId
+      });
+      await supabase.from('businesses').update({ vapi_assistant_id: liveAssistantId }).eq('id', businessId);
+      await supabase.from('phone_numbers').update({ vapi_assistant_id: liveAssistantId }).eq('id', phoneRow.id);
+    }
+
+    return { ok: true, assistantId: liveAssistantId, source: 'phone_number', corrected };
+  } catch (err: any) {
+    logger.error('vapi_resolve_mapping_failed', { businessId, message: err.message });
+    return { ok: false, reason: err.message ?? 'Could not reach Vapi' };
+  }
+}
 
 /** Flattens a nested config object into dotted-path keys for comparison (arrays are left as leaf values). */
 function flattenConfig(obj: Record<string, any>, prefix = ''): Record<string, unknown> {
@@ -170,15 +236,21 @@ function compareConfigs(expected: Record<string, any>, applied: Record<string, a
 export async function syncAssistantSettings(businessId: string): Promise<SyncResult> {
   const supabase = supabaseServiceRole();
 
+  // Ground-truth resolution first — never blindly trust businesses.vapi_assistant_id.
+  const mapping = await resolveAssistantMapping(businessId);
+  if (!mapping.ok) {
+    return { ok: false, status: 'failed', error: mapping.reason };
+  }
+  const assistantId = mapping.assistantId;
+  const mappingCorrected = mapping.corrected;
+
   const { data: business } = await supabase
     .from('businesses')
-    .select('id, name, business_type, service_area, vapi_assistant_id')
+    .select('id, name, business_type, service_area')
     .eq('id', businessId)
     .single();
 
-  if (!business?.vapi_assistant_id) {
-    return { ok: false, status: 'failed', error: 'No Vapi assistant provisioned for this business yet.' };
-  }
+  if (!business) return { ok: false, status: 'failed', error: 'Business not found.' };
 
   const { data: settings } = await supabase.from('assistant_settings').select('*').eq('business_id', businessId).single();
   const { data: voiceSettings } = await supabase
@@ -187,9 +259,13 @@ export async function syncAssistantSettings(businessId: string): Promise<SyncRes
     .eq('business_id', businessId)
     .single();
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
   const basePrompt = buildSystemPrompt(business);
   const fullPrompt = settings?.system_prompt_override ? `${basePrompt}\n\n${settings.system_prompt_override}` : basePrompt;
 
+  // First message is the one sentence Vapi actually speaks when answering.
+  // The separate "greeting" field is never sent to Vapi and has no runtime
+  // effect — first_message is the single source of truth for what's spoken.
   const expectedConfig: Record<string, any> = {
     name: settings?.name ?? `${business.name} Receptionist`,
     firstMessage: settings?.first_message || `Thanks for calling ${business.name} — how can I help you today?`,
@@ -197,7 +273,7 @@ export async function syncAssistantSettings(businessId: string): Promise<SyncRes
       provider: 'openai',
       model: 'gpt-4o',
       temperature: 0.3,
-      systemPrompt: fullPrompt,
+      messages: [{ role: 'system', content: fullPrompt }],
       functions: VAPI_TOOLS
     },
     voice: {
@@ -209,7 +285,9 @@ export async function syncAssistantSettings(businessId: string): Promise<SyncRes
     silenceTimeoutSeconds: settings?.silence_timeout_seconds ?? 10,
     maxDurationSeconds: settings?.call_timeout_seconds ?? 1800,
     recordingEnabled: settings?.record_calls ?? true,
-    transcriber: { language: settings?.language ?? 'en' }
+    transcriber: { language: settings?.language ?? 'en' },
+    serverUrl: `${appUrl}/api/vapi/webhook`,
+    serverUrlSecret: process.env.VAPI_WEBHOOK_SECRET ?? ''
   };
 
   if (settings?.voicemail_behavior === 'leave_message' && settings?.first_message) {
@@ -218,7 +296,7 @@ export async function syncAssistantSettings(businessId: string): Promise<SyncRes
 
   const { data: syncRow } = await supabase
     .from('assistant_sync_status')
-    .insert({ business_id: businessId, vapi_assistant_id: business.vapi_assistant_id, status: 'pending', expected_config: expectedConfig })
+    .insert({ business_id: businessId, vapi_assistant_id: assistantId, status: 'pending', expected_config: expectedConfig })
     .select('id')
     .single();
 
@@ -229,11 +307,11 @@ export async function syncAssistantSettings(businessId: string): Promise<SyncRes
         .update({ status: 'failed', error_message: error, completed_at: new Date().toISOString() })
         .eq('id', syncRow.id);
     }
-    return { ok: false, status: 'failed', error };
+    return { ok: false, status: 'failed', error, assistantId, mappingCorrected };
   }
 
   try {
-    const patchRes = await fetch(`${VAPI_API_BASE}/assistant/${business.vapi_assistant_id}`, {
+    const patchRes = await fetch(`${VAPI_API_BASE}/assistant/${assistantId}`, {
       method: 'PATCH',
       headers: vapiHeaders(),
       body: JSON.stringify(expectedConfig)
@@ -245,13 +323,37 @@ export async function syncAssistantSettings(businessId: string): Promise<SyncRes
 
     // Never trust the PATCH's 200 alone — read the assistant back and
     // compare what was actually applied.
-    const getRes = await fetch(`${VAPI_API_BASE}/assistant/${business.vapi_assistant_id}`, { headers: vapiHeaders() });
+    const getRes = await fetch(`${VAPI_API_BASE}/assistant/${assistantId}`, { headers: vapiHeaders() });
     if (!getRes.ok) {
       return fail(`Settings were sent, but could not be read back to verify: ${getRes.status} ${await getRes.text()}`);
     }
 
     const applied = await getRes.json();
     const fieldResults = compareConfigs(expectedConfig, applied);
+
+    // Confirm the phone number itself still points at this exact assistant —
+    // a separate, explicit check rather than assuming the assistant PATCH
+    // implies the phone-number-to-assistant link is also correct.
+    const { data: phoneRow } = await supabase
+      .from('phone_numbers')
+      .select('vapi_phone_number_id')
+      .eq('business_id', businessId)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (phoneRow?.vapi_phone_number_id) {
+      try {
+        const phoneRes = await fetch(`${VAPI_API_BASE}/phone-number/${phoneRow.vapi_phone_number_id}`, { headers: vapiHeaders() });
+        const phoneData = phoneRes.ok ? await phoneRes.json() : null;
+        fieldResults['phoneNumber.assistantId'] = {
+          expected: assistantId,
+          applied: phoneData?.assistantId ?? null,
+          match: phoneData?.assistantId === assistantId
+        };
+      } catch {
+        fieldResults['phoneNumber.assistantId'] = { expected: assistantId, applied: null, match: false };
+      }
+    }
+
     const matches = Object.values(fieldResults).map((f) => f.match);
     const status: SyncResult['status'] = matches.every(Boolean) ? 'synced' : matches.some(Boolean) ? 'partial' : 'failed';
 
@@ -262,7 +364,7 @@ export async function syncAssistantSettings(businessId: string): Promise<SyncRes
         .eq('id', syncRow.id);
     }
 
-    return { ok: status !== 'failed', status, fieldResults };
+    return { ok: status !== 'failed', status, assistantId, mappingCorrected, fieldResults };
   } catch (err: any) {
     logger.error('vapi_sync_assistant_settings_failed', { businessId, message: err.message });
     return fail(err.message ?? 'Could not reach Vapi');

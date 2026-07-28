@@ -1,6 +1,6 @@
 import { supabaseServiceRole } from './supabase/admin';
 import { purchaseNumber, twilioClientForConnection, releaseNumber } from './twilio';
-import { createAssistant, importTwilioNumberToVapi, deleteVapiPhoneNumber, deleteAssistant } from './vapi-assistant';
+import { createAssistant, importTwilioNumberToVapi, deleteVapiPhoneNumber, deleteAssistant, syncAssistantSettings } from './vapi-assistant';
 import { buildSystemPrompt } from './vapi-tools';
 import { decryptSecret } from './crypto';
 import { logger } from './logger';
@@ -201,6 +201,15 @@ export async function runBuyNumberWorkflow(params: {
   }
   await recordStep(ctx, 'run_connection_test', true);
 
+  // Push whatever's actually saved in assistant_settings (if the owner
+  // customized it before this number existed) rather than leaving the
+  // assistant on its bootstrap defaults — non-fatal: the number is still
+  // successfully provisioned even if this particular sync comes back partial.
+  const sync = await syncAssistantSettings(params.businessId);
+  if (sync.status !== 'synced') {
+    logger.warn('provisioning_post_create_sync_incomplete', { businessId: params.businessId, status: sync.status, error: sync.error });
+  }
+
   await supabase
     .from('provisioning_jobs')
     .update({ status: 'succeeded', phone_number_id: phoneRow.id, completed_at: new Date().toISOString() })
@@ -339,6 +348,11 @@ export async function runImportByoNumberWorkflow(params: {
     return fail(ctx, 'run_connection_test', err.message ?? 'Connection test failed');
   }
   await recordStep(ctx, 'run_connection_test', true);
+
+  const sync = await syncAssistantSettings(params.businessId);
+  if (sync.status !== 'synced') {
+    logger.warn('provisioning_post_create_sync_incomplete', { businessId: params.businessId, status: sync.status, error: sync.error });
+  }
 
   await supabase
     .from('provisioning_jobs')
