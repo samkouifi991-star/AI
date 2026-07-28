@@ -20,9 +20,12 @@ const CAPABILITIES = [
   { title: 'Transfers to your team', desc: 'Hands off urgent or complex calls to a real person, instantly.' }
 ];
 
-export default function HomePage() {
+export default function HomePage({ searchParams }: { searchParams: { accountDeleted?: string } }) {
   return (
     <>
+      {searchParams.accountDeleted && (
+        <div className="bg-ink text-white text-sm text-center py-3 px-6">Your account has been deleted.</div>
+      )}
       <section className="bg-gradient-to-b from-brand-50 via-white to-white">
         <div className="max-w-4xl mx-auto px-6 pt-20 pb-16 text-center">
           <h1 className="text-4xl md:text-6xl font-display font-semibold tracking-tight leading-[1.1] text-ink">

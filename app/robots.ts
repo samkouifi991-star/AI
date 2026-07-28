@@ -6,7 +6,7 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: '*',
       allow: '/',
-      disallow: ['/api/', '/dashboard', '/onboarding', '/calls', '/conversations', '/leads', '/appointments', '/orders', '/menu', '/phone', '/settings', '/estimate-rules', '/knowledge-base', '/train-ai', '/teach', '/practice', '/calendar', '/invoices']
+      disallow: ['/api/', '/dashboard', '/onboarding', '/calls', '/conversations', '/leads', '/appointments', '/orders', '/menu', '/phone', '/settings', '/estimate-rules', '/knowledge-base', '/train-ai', '/teach', '/practice', '/calendar', '/invoices', '/account']
     },
     sitemap: `${appUrl}/sitemap.xml`
   };

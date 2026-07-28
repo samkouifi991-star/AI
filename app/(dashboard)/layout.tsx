@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase/server';
+import SignOutButton from './SignOutButton';
 
 const SERVICE_NAV = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -63,9 +64,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
               {item.label}
             </Link>
           ))}
+          <Link
+            href="/account"
+            className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-ink"
+          >
+            Account Settings
+          </Link>
         </nav>
-        <div className="px-3 py-4 border-t border-slate-200">
+        <div className="px-3 py-4 border-t border-slate-200 space-y-2">
           <span className="block px-3 py-1 text-xs text-slate-600 truncate">{user.email}</span>
+          <SignOutButton className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-danger" />
         </div>
       </aside>
       <main className="flex-1 p-8">{children}</main>
