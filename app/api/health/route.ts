@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseServiceRole } from '@/lib/supabase/admin';
 import { getVoiceProvider } from '@/lib/voice';
+import { getOpenAI } from '@/lib/openai';
 import { isStripeTestMode, stripeConfigured } from '@/lib/stripe';
 import { logger } from '@/lib/logger';
 
@@ -57,6 +58,21 @@ async function checkElevenLabs(): Promise<CheckResult> {
   }
 }
 
+async function checkOpenAi(): Promise<CheckResult> {
+  if (!process.env.OPENAI_API_KEY) {
+    return { ok: false, message: 'OPENAI_API_KEY is not set.' };
+  }
+  try {
+    // Lightest real call that actually exercises the key against OpenAI's
+    // API — lists models rather than spending tokens on a completion.
+    const res = await withTimeout(getOpenAI().models.list(), 4000);
+    return { ok: true, message: 'Connected', modelCount: res.data.length } as CheckResult & { modelCount: number };
+  } catch (err: any) {
+    logger.error('health_check_openai_failed', { message: err.message });
+    return { ok: false, message: 'Could not reach OpenAI — check OPENAI_API_KEY.' };
+  }
+}
+
 async function checkVapi(): Promise<CheckResult> {
   if (!process.env.VAPI_API_KEY) {
     return { ok: false, message: 'VAPI_API_KEY is not set.' };
@@ -98,11 +114,16 @@ function checkTwilio(): CheckResult {
 // the Hostinger deployment checklist), since it never returns secret
 // values, only booleans/short status messages.
 export async function GET() {
-  const [database, elevenlabs, vapi] = await Promise.all([checkDatabase(), checkElevenLabs(), checkVapi()]);
+  const [database, elevenlabs, vapi, openai] = await Promise.all([
+    checkDatabase(),
+    checkElevenLabs(),
+    checkVapi(),
+    checkOpenAi()
+  ]);
   const stripe = checkStripe();
   const twilio = checkTwilio();
 
-  const checks = { database, elevenlabs, vapi, stripe, twilio };
+  const checks = { database, openai, elevenlabs, vapi, stripe, twilio };
   const allOk = Object.values(checks).every((c) => c.ok);
 
   return NextResponse.json(
