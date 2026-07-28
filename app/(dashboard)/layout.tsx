@@ -4,6 +4,7 @@ import { supabaseServer } from '@/lib/supabase/server';
 import SignOutButton from './SignOutButton';
 
 const SERVICE_NAV = [
+  { href: '/onboarding', label: 'Set up Business Pilot AI' },
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/conversations', label: 'Conversations' },
   { href: '/leads', label: 'Leads' },
@@ -19,6 +20,7 @@ const SERVICE_NAV = [
 ];
 
 const RESTAURANT_NAV = [
+  { href: '/onboarding', label: 'Set up Business Pilot AI' },
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/conversations', label: 'Conversations' },
   { href: '/menu', label: 'Menu' },
