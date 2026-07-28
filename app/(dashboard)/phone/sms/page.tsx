@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import PhoneSubNav from '../PhoneSubNav';
 
 const DEFAULTS = {
   paymentLinkMessages: true,
@@ -68,6 +69,8 @@ export default function SmsSettingsPage() {
         <h1 className="font-display text-2xl font-semibold mb-1">SMS settings</h1>
         <p className="text-slate-600 text-sm">What your AI texts customers, and when.</p>
       </div>
+
+      <PhoneSubNav />
 
       {settings.messagingRegistrationStatus !== 'registered' && (
         <div className="text-sm text-warning bg-amber-50 rounded-lg px-3 py-2">

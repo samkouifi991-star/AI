@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase/client';
+import PhoneSubNav from '../PhoneSubNav';
 
 type Tab = 'forward' | 'buy' | 'import';
 
@@ -193,6 +194,8 @@ export default function PhoneNumbersPage() {
         <h1 className="font-display text-2xl font-semibold mb-1">Phone numbers</h1>
         <p className="text-slate-600 text-sm">Keep your current number, buy a new one, or bring your own Twilio account.</p>
       </div>
+
+      <PhoneSubNav />
 
       {actionError && <div className="text-sm text-danger bg-red-50 rounded-lg px-3 py-2">{actionError}</div>}
       {actionSuccess && <div className="text-sm text-success bg-green-50 rounded-lg px-3 py-2">{actionSuccess}</div>}

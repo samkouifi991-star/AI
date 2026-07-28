@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import PhoneSubNav from '../PhoneSubNav';
 
 const TESTS = [
   { type: 'forwarding_check', label: 'Test inbound number', needsPhone: false },
@@ -48,6 +49,8 @@ export default function TestCenterPage() {
           server-side simulation can substitute for that, so those give you clear instructions instead of a fake pass.
         </p>
       </div>
+
+      <PhoneSubNav />
 
       <section className="card space-y-3">
         <input className="input max-w-xs" placeholder="Your phone number (for SMS test)" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} />

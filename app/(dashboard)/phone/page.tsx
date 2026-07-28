@@ -1,5 +1,5 @@
-import Link from 'next/link';
 import { supabaseServer } from '@/lib/supabase/server';
+import PhoneSubNav from './PhoneSubNav';
 
 export default async function PhoneOverviewPage() {
   const supabase = supabaseServer();
@@ -48,6 +48,8 @@ export default async function PhoneOverviewPage() {
         <h1 className="font-display text-2xl font-semibold mb-1">Phone management</h1>
         <p className="text-slate-600 text-sm">Everything about how customers reach your AI, in one place.</p>
       </div>
+
+      <PhoneSubNav />
 
       <div className="grid sm:grid-cols-2 gap-4">
         <div className="card">
@@ -124,17 +126,6 @@ export default async function PhoneOverviewPage() {
             {openGapCount ? <span className="badge-warning">{openGapCount} open question{openGapCount === 1 ? '' : 's'}</span> : <span className="badge-success">All caught up</span>}
           </div>
         </div>
-      </div>
-
-      <div className="flex flex-wrap gap-3">
-        <Link href="/phone/numbers" className="btn-primary">Manage phone numbers</Link>
-        <Link href="/phone/routing" className="btn-secondary">Call routing</Link>
-        <Link href="/phone/assistant" className="btn-secondary">Assistant settings</Link>
-        <Link href="/phone/sms" className="btn-secondary">SMS settings</Link>
-        <Link href="/phone/test-center" className="btn-secondary">Test center</Link>
-        <Link href="/teach" className="btn-secondary">Teach Ava</Link>
-        <Link href="/practice" className="btn-secondary">Practice</Link>
-        <Link href="/conversations" className="btn-secondary">Conversations</Link>
       </div>
     </div>
   );

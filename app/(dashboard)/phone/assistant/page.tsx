@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import PhoneSubNav from '../PhoneSubNav';
 
 const DEFAULTS = {
   name: 'AI Receptionist',
@@ -90,6 +91,8 @@ export default function AssistantSettingsPage() {
         <h1 className="font-display text-2xl font-semibold mb-1">Assistant settings</h1>
         <p className="text-slate-600 text-sm">How your AI receptionist introduces itself and behaves on calls.</p>
       </div>
+
+      <PhoneSubNav />
 
       {saveResult && (
         <div className={mismatches.length ? 'text-sm text-warning bg-amber-50 rounded-lg px-3 py-2' : 'text-sm text-success bg-green-50 rounded-lg px-3 py-2'}>
