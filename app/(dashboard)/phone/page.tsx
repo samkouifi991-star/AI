@@ -42,11 +42,23 @@ export default async function PhoneOverviewPage() {
   const vapiWebhook = webhookStatuses?.find((w) => w.webhook_type === 'vapi');
   const smsWebhook = webhookStatuses?.find((w) => w.webhook_type === 'twilio_sms');
 
+  const numberConnected = Boolean(activeNumber?.phone_number ?? business.ai_phone_number);
+  const assistantReady = Boolean(business.vapi_assistant_id) && twilioConn?.status === 'connected';
+
+  const summary = !numberConnected
+    ? { label: 'Your number still needs an assistant', tone: 'badge-warning' }
+    : !assistantReady
+    ? { label: 'Your phone is connected — finishing setup', tone: 'badge-warning' }
+    : { label: 'Your AI employee is ready', tone: 'badge-success' };
+
   return (
     <div className="max-w-4xl space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold mb-1">Phone management</h1>
-        <p className="text-slate-600 text-sm">Everything about how customers reach your AI, in one place.</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="font-display text-2xl font-semibold mb-1">Phone management</h1>
+          <p className="text-slate-600 text-sm">Everything about how customers reach your AI, in one place.</p>
+        </div>
+        <span className={summary.tone}>{summary.label}</span>
       </div>
 
       <PhoneSubNav />
@@ -61,11 +73,11 @@ export default async function PhoneOverviewPage() {
           <div className="text-lg font-semibold">{activeNumber?.phone_number ?? business.ai_phone_number ?? 'Not provisioned'}</div>
         </div>
         <div className="card">
-          <div className="text-xs font-medium text-slate-500 mb-1">Provider / connection</div>
+          <div className="text-xs font-medium text-slate-500 mb-1">Connection health</div>
           <div className="text-sm">
             {twilioConn ? (
               <span className={twilioConn.status === 'connected' ? 'badge-success' : 'badge-danger'}>
-                Twilio · {twilioConn.mode} · {twilioConn.status}
+                {twilioConn.status === 'connected' ? 'Connected' : 'Needs attention'}
               </span>
             ) : (
               <span className="badge-warning">Not connected</span>
@@ -73,21 +85,21 @@ export default async function PhoneOverviewPage() {
           </div>
         </div>
         <div className="card">
-          <div className="text-xs font-medium text-slate-500 mb-1">Vapi assistant</div>
-          <div className="text-sm">{business.vapi_assistant_id ? <span className="badge-success">Provisioned</span> : <span className="badge-warning">Not provisioned</span>}</div>
+          <div className="text-xs font-medium text-slate-500 mb-1">Your AI employee</div>
+          <div className="text-sm">{business.vapi_assistant_id ? <span className="badge-success">Ready</span> : <span className="badge-warning">Not set up yet</span>}</div>
         </div>
         <div className="card">
           <div className="text-xs font-medium text-slate-500 mb-1">Voice</div>
           <div className="text-sm font-medium">{voiceSettings?.voice_name ?? 'Default'}</div>
         </div>
         <div className="card">
-          <div className="text-xs font-medium text-slate-500 mb-1">SMS webhook status</div>
+          <div className="text-xs font-medium text-slate-500 mb-1">Text messages</div>
           <div className="text-sm">
             {smsWebhook?.last_status === 'ok' ? <span className="badge-success">Healthy</span> : <span className="badge-warning">No recent activity</span>}
           </div>
         </div>
         <div className="card">
-          <div className="text-xs font-medium text-slate-500 mb-1">Vapi webhook status</div>
+          <div className="text-xs font-medium text-slate-500 mb-1">Call handling</div>
           <div className="text-sm">
             {vapiWebhook?.last_status === 'ok' ? <span className="badge-success">Healthy</span> : <span className="badge-warning">No recent activity</span>}
           </div>
@@ -127,6 +139,16 @@ export default async function PhoneOverviewPage() {
           </div>
         </div>
       </div>
+
+      <details className="text-xs text-slate-500">
+        <summary className="cursor-pointer select-none">Advanced</summary>
+        <div className="mt-2 space-y-1 pl-1">
+          <div>Vapi assistant ID: <span className="font-mono">{business.vapi_assistant_id ?? 'none'}</span></div>
+          <div>Vapi phone number ID: <span className="font-mono">{activeNumber?.vapi_phone_number_id ?? 'none'}</span></div>
+          <div>Twilio SID: <span className="font-mono">{activeNumber?.twilio_sid ?? 'none'}</span></div>
+          <div>Twilio connection mode: <span className="font-mono">{twilioConn?.mode ?? 'none'}</span></div>
+        </div>
+      </details>
     </div>
   );
 }

@@ -28,15 +28,17 @@ type LastSync = {
   error_message: string | null;
 } | null;
 
+// Plain-language for the owner — technical status (assistant IDs, raw sync
+// state) lives in the collapsed Advanced section below, not here.
 function statusBadge(lastSync: LastSync): { label: string; className: string } {
-  if (!lastSync) return { label: 'Not provisioned', className: 'badge-warning' };
-  if (lastSync.status === 'synced') return { label: 'Live in Vapi', className: 'badge-success' };
-  if (lastSync.status === 'partial') return { label: 'Partially synced', className: 'badge-warning' };
+  if (!lastSync) return { label: 'Your number still needs an assistant', className: 'badge-warning' };
+  if (lastSync.status === 'synced') return { label: 'Your AI employee is ready', className: 'badge-success' };
+  if (lastSync.status === 'partial') return { label: 'A setting could not be applied', className: 'badge-warning' };
   if (lastSync.status === 'pending') return { label: 'Syncing…', className: 'badge-warning' };
   if (lastSync.error_message?.toLowerCase().includes('no active phone number')) {
-    return { label: 'Not provisioned', className: 'badge-warning' };
+    return { label: 'Your number still needs an assistant', className: 'badge-warning' };
   }
-  return { label: 'Failed', className: 'badge-danger' };
+  return { label: 'A setting could not be applied', className: 'badge-danger' };
 }
 
 export default function AssistantSettingsPage() {
@@ -47,6 +49,7 @@ export default function AssistantSettingsPage() {
   const [repairing, setRepairing] = useState(false);
   const [saveResult, setSaveResult] = useState<string | null>(null);
   const [mismatches, setMismatches] = useState<string[]>([]);
+  const [lastSyncMeta, setLastSyncMeta] = useState<any>(null);
 
   async function load() {
     const res = await fetch('/api/phone/assistant-settings');
@@ -80,19 +83,16 @@ export default function AssistantSettingsPage() {
 
   function applySyncResult(data: any) {
     if (data.syncStatus === 'synced') {
-      setSaveResult(
-        data.mappingCorrected
-          ? 'Confirmed live in Vapi — the assistant mapping was out of date and has been corrected automatically.'
-          : 'Confirmed live in Vapi — read back and every field matched.'
-      );
+      setSaveResult('Your AI employee is ready — your latest changes are live.');
       setMismatches([]);
     } else if (data.syncStatus === 'partial') {
-      setSaveResult('Only some settings were confirmed applied — see below.');
+      setSaveResult('A setting could not be applied — see Advanced below for exactly which one.');
       setMismatches(Object.entries(data.fieldResults ?? {}).filter(([, v]: any) => !v.match).map(([k]) => k));
     } else {
-      setSaveResult(data.syncError ?? 'Sync to the live assistant failed.');
+      setSaveResult('A setting could not be applied. See Advanced below for the technical reason.');
       setMismatches([]);
     }
+    setLastSyncMeta(data);
   }
 
   async function save() {
@@ -140,21 +140,35 @@ export default function AssistantSettingsPage() {
       {saveResult && (
         <div className={mismatches.length ? 'text-sm text-warning bg-amber-50 rounded-lg px-3 py-2' : 'text-sm text-success bg-green-50 rounded-lg px-3 py-2'}>
           {saveResult}
-          {mismatches.length > 0 && (
-            <ul className="list-disc list-inside mt-1 text-xs">
-              {mismatches.map((f) => (
-                <li key={f}>{f} did not apply as requested</li>
-              ))}
-            </ul>
-          )}
         </div>
       )}
 
-      {lastSync && (
-        <div className="text-xs text-slate-500">
-          Vapi assistant: <span className="font-mono">{lastSync.vapi_assistant_id ?? 'none'}</span> · last checked{' '}
-          {new Date(lastSync.completed_at ?? lastSync.requested_at).toLocaleString()}
-        </div>
+      {(lastSync || lastSyncMeta) && (
+        <details className="text-xs text-slate-500">
+          <summary className="cursor-pointer select-none">Advanced</summary>
+          <div className="mt-2 space-y-1 pl-1">
+            {lastSync && (
+              <div>
+                Vapi assistant ID: <span className="font-mono">{lastSync.vapi_assistant_id ?? 'none'}</span> · last checked{' '}
+                {new Date(lastSync.completed_at ?? lastSync.requested_at).toLocaleString()}
+              </div>
+            )}
+            {lastSyncMeta?.mappingCorrected && (
+              <div>The assistant mapping was out of date and was corrected automatically during this sync.</div>
+            )}
+            {lastSyncMeta?.syncError && <div>Error: {lastSyncMeta.syncError}</div>}
+            {mismatches.length > 0 && (
+              <div>
+                Fields that did not apply:
+                <ul className="list-disc list-inside">
+                  {mismatches.map((f) => (
+                    <li key={f} className="font-mono">{f}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </details>
       )}
 
       <section className="card space-y-3">
@@ -242,7 +256,7 @@ export default function AssistantSettingsPage() {
       <div className="flex gap-3">
         <button className="btn-primary" onClick={save} disabled={saving || repairing}>{saving ? 'Saving…' : 'Save assistant settings'}</button>
         <button className="btn-secondary" onClick={repair} disabled={saving || repairing} title="Re-resolve the correct Vapi assistant and re-verify every field, without changing anything above">
-          {repairing ? 'Checking…' : 'Sync with Vapi / Repair connection'}
+          {repairing ? 'Checking…' : 'Repair connection'}
         </button>
       </div>
     </div>

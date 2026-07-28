@@ -119,6 +119,10 @@ export default function PhoneNumbersPage() {
   }
 
   async function buyNumber(phoneNumber: string, monthlyPrice: number | null) {
+    const priceLabel = monthlyPrice ? `$${monthlyPrice}/month` : 'a recurring monthly fee';
+    if (!window.confirm(`This purchases ${phoneNumber} through Twilio for real — ${priceLabel}, charged to your connected Twilio account. Continue?`)) {
+      return;
+    }
     setPurchasing(phoneNumber);
     setActionError(null);
     const res = await fetch('/api/phone/purchase', {

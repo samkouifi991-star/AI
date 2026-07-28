@@ -165,6 +165,10 @@ export default function OnboardingWizard() {
   }
 
   async function buyNumber(phoneNumber: string, price: number | null) {
+    const priceLabel = price ? `$${price}/month` : 'a recurring monthly fee';
+    if (!window.confirm(`This purchases ${phoneNumber} through Twilio for real — ${priceLabel}, charged to your connected Twilio account. Continue?`)) {
+      return;
+    }
     setPhoneBusy(true);
     setError(null);
     const res = await fetch('/api/phone/purchase', {
