@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { logAudit } from '@/lib/audit';
+import { verifyReadyForLive } from '@/lib/vapi-assistant';
 
 async function getBusinessId(supabase: ReturnType<typeof supabaseServer>) {
   const {
@@ -42,8 +43,16 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   if (currentStage === 'complete') {
-    await supabase.from('businesses').update({ is_live: true }).eq('id', businessId);
-    await logAudit({ businessId, actorUserId: user?.id, action: 'business_went_live' });
+    // The client reaching the final wizard step is not proof anything is
+    // actually connected — verify the phone number and assistant are real
+    // and confirmed via Vapi read-back before ever setting is_live.
+    const readiness = await verifyReadyForLive(businessId);
+    if (readiness.ready) {
+      await supabase.from('businesses').update({ is_live: true }).eq('id', businessId);
+      await logAudit({ businessId, actorUserId: user?.id, action: 'business_went_live' });
+      return NextResponse.json({ ok: true, isLive: true });
+    }
+    return NextResponse.json({ ok: true, isLive: false, reason: readiness.reason });
   }
 
   return NextResponse.json({ ok: true });

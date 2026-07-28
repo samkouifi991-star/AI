@@ -46,6 +46,9 @@ export async function createAssistant(params: {
           functions: VAPI_TOOLS
         },
         voice: { provider: params.voiceProvider, voiceId: params.voiceId, model: 'eleven_multilingual_v2' },
+        // Lets Ava end the call herself once she's confirmed the order/booking
+        // or the caller says goodbye, instead of sitting on the line silently.
+        endCallFunctionEnabled: true,
         serverUrl: params.serverUrl,
         serverUrlSecret: params.serverUrlSecret
       })
@@ -193,6 +196,53 @@ export async function resolveAssistantMapping(businessId: string): Promise<Mappi
   }
 }
 
+/**
+ * The real gate for businesses.is_live. Onboarding's "Go live" button
+ * previously set is_live=true purely because the client said it had
+ * reached the final wizard step — with no server-side check that a phone
+ * number or assistant actually existed, let alone that they were verified
+ * connected. This requires an active phone number, a resolvable assistant,
+ * and a completed sync whose read-back actually matched.
+ */
+export async function verifyReadyForLive(businessId: string): Promise<{ ready: true } | { ready: false; reason: string }> {
+  const supabase = supabaseServiceRole();
+
+  const mapping = await resolveAssistantMapping(businessId);
+  if (!mapping.ok) {
+    return { ready: false, reason: `No connected phone number and assistant yet (${mapping.reason})` };
+  }
+
+  const { data: phoneRow } = await supabase
+    .from('phone_numbers')
+    .select('vapi_phone_number_id')
+    .eq('business_id', businessId)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (!phoneRow?.vapi_phone_number_id) {
+    return { ready: false, reason: 'No active phone number is connected to Vapi yet.' };
+  }
+
+  const { data: lastSync } = await supabase
+    .from('assistant_sync_status')
+    .select('status, completed_at')
+    .eq('business_id', businessId)
+    .order('requested_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!lastSync || lastSync.status !== 'synced') {
+    return {
+      ready: false,
+      reason:
+        lastSync?.status === 'partial'
+          ? 'Your assistant settings were only partially confirmed on Vapi — open Assistant Settings and use Sync with Vapi.'
+          : 'Your assistant settings have not been confirmed on Vapi yet — open Assistant Settings and save, or use Sync with Vapi.'
+    };
+  }
+
+  return { ready: true };
+}
+
 /** Flattens a nested config object into dotted-path keys for comparison (arrays are left as leaf values). */
 function flattenConfig(obj: Record<string, any>, prefix = ''): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -286,6 +336,7 @@ export async function syncAssistantSettings(businessId: string): Promise<SyncRes
     maxDurationSeconds: settings?.call_timeout_seconds ?? 1800,
     recordingEnabled: settings?.record_calls ?? true,
     transcriber: { language: settings?.language ?? 'en' },
+    endCallFunctionEnabled: true,
     serverUrl: `${appUrl}/api/vapi/webhook`,
     serverUrlSecret: process.env.VAPI_WEBHOOK_SECRET ?? ''
   };

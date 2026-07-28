@@ -27,6 +27,8 @@ export default function OnboardingWizard() {
   const [stage, setStage] = useState<Stage>('business');
   const [completed, setCompleted] = useState<Stage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [goLiveBusy, setGoLiveBusy] = useState(false);
+  const [goLiveError, setGoLiveError] = useState<string | null>(null);
 
   // Stage: business
   const [form, setForm] = useState({ business_type: 'service' as 'service' | 'restaurant', name: '', phone_number: '', service_area: '' });
@@ -90,11 +92,26 @@ export default function OnboardingWizard() {
   async function saveProgress(newStage: StageOrComplete, newCompleted: Stage[]) {
     setCompleted(newCompleted);
     if (newStage !== 'complete') setStage(newStage);
-    await fetch('/api/onboarding/progress', {
+    const res = await fetch('/api/onboarding/progress', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ currentStage: newStage, completedStages: newCompleted })
     });
+    return res.json();
+  }
+
+  async function goLive() {
+    setGoLiveBusy(true);
+    setGoLiveError(null);
+    const data = await saveProgress('complete', [...completed, 'go_live']);
+    setGoLiveBusy(false);
+    if (data.isLive) {
+      router.push('/dashboard');
+    } else {
+      setGoLiveError(
+        data.reason ?? 'Could not confirm your phone and assistant are fully connected yet — check Phone Management.'
+      );
+    }
   }
 
   function markComplete(current: Stage) {
@@ -366,8 +383,13 @@ export default function OnboardingWizard() {
               </li>
             ))}
           </ul>
-          <button className="btn-primary" onClick={() => saveProgress('complete', [...completed, 'go_live']).then(() => router.push('/dashboard'))}>
-            Go live
+          {goLiveError && (
+            <div className="text-sm text-warning bg-amber-50 rounded-lg px-3 py-2">
+              Not live yet — {goLiveError}
+            </div>
+          )}
+          <button className="btn-primary" onClick={goLive} disabled={goLiveBusy}>
+            {goLiveBusy ? 'Checking your connection…' : 'Go live'}
           </button>
         </section>
       )}

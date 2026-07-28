@@ -3,6 +3,7 @@ import { supabaseServiceRole } from '@/lib/supabase/admin';
 import { translateText } from '@/lib/language';
 import { dispatchTool } from '@/lib/ava-dispatcher';
 import { checkDuplicateWebhook, recordWebhookResponse } from '@/lib/webhook-dedup';
+import { logger } from '@/lib/logger';
 
 /**
  * Single webhook that Vapi (or Retell/Bland) calls for:
@@ -19,35 +20,70 @@ function verifyWebhookSecret(req: NextRequest): boolean {
   return provided === process.env.VAPI_WEBHOOK_SECRET;
 }
 
+type ResolutionSource = 'vapi_phone_number_id' | 'vapi_assistant_id' | 'dialed_number' | 'metadata';
+type BusinessResolution =
+  | { businessId: string; sources: Partial<Record<ResolutionSource, string | null>> }
+  | { conflict: true; sources: Partial<Record<ResolutionSource, string | null>> }
+  | { businessId: null };
+
 /**
- * Resolves which business a live call belongs to. call.metadata.businessId
- * (set by lib/vapi-assistant.ts at assistant/phone-number creation time) is
- * the primary source, but this always falls back to looking the called
- * number up directly in our own phone_numbers/businesses tables — data we
- * control — rather than depending entirely on Vapi propagating metadata
- * correctly. A call is never dropped just because metadata came back empty.
+ * Resolves which business a live call belongs to, in a fixed trust order —
+ * never guessing when sources disagree:
+ *   1. Vapi's own phone-number resource id (the literal resource that
+ *      answered) — most authoritative.
+ *   2. Vapi's assistant id.
+ *   3. The literal dialed number, looked up in our own phone_numbers table.
+ *   4. call.metadata.businessId — a consistency check only, never primary,
+ *      since metadata correctness depends on Vapi propagating what we sent
+ *      at provisioning time.
+ * If two sources that both resolved disagree, this is a real configuration
+ * bug (a number or assistant pointing at the wrong business) — the caller
+ * must stop and surface a configuration error rather than picking one.
  */
-async function resolveBusinessId(call: any, supabase: ReturnType<typeof supabaseServiceRole>): Promise<string | null> {
-  const fromMetadata: string | undefined = call?.metadata?.businessId;
-  if (fromMetadata) return fromMetadata;
+async function resolveBusinessId(call: any, supabase: ReturnType<typeof supabaseServiceRole>): Promise<BusinessResolution> {
+  const sources: Partial<Record<ResolutionSource, string | null>> = {};
+
+  const vapiPhoneNumberId: string | undefined = call?.phoneNumberId ?? call?.phoneNumber?.id;
+  if (vapiPhoneNumberId) {
+    const { data } = await supabase.from('phone_numbers').select('business_id').eq('vapi_phone_number_id', vapiPhoneNumberId).maybeSingle();
+    sources.vapi_phone_number_id = data?.business_id ?? null;
+  }
+
+  const vapiAssistantId: string | undefined = call?.assistantId ?? call?.assistant?.id;
+  if (vapiAssistantId) {
+    const { data } = await supabase.from('businesses').select('id').eq('vapi_assistant_id', vapiAssistantId).maybeSingle();
+    sources.vapi_assistant_id = data?.id ?? null;
+  }
 
   const dialedNumber: string | undefined = call?.phoneNumber?.number;
-  if (!dialedNumber) return null;
+  if (dialedNumber) {
+    const { data } = await supabase
+      .from('phone_numbers')
+      .select('business_id')
+      .eq('phone_number', dialedNumber)
+      .eq('status', 'active')
+      .maybeSingle();
+    sources.dialed_number = data?.business_id ?? null;
+  }
 
-  const { data: phoneRow } = await supabase
-    .from('phone_numbers')
-    .select('business_id')
-    .eq('phone_number', dialedNumber)
-    .eq('status', 'active')
-    .maybeSingle();
-  if (phoneRow?.business_id) return phoneRow.business_id;
+  const metadataBusinessId: string | undefined = call?.metadata?.businessId;
+  if (metadataBusinessId) sources.metadata = metadataBusinessId;
 
-  const { data: businessRow } = await supabase
-    .from('businesses')
-    .select('id')
-    .eq('ai_phone_number', dialedNumber)
-    .maybeSingle();
-  return businessRow?.id ?? null;
+  const resolvedIds = Object.values(sources).filter((v): v is string => !!v);
+  const distinctIds = Array.from(new Set(resolvedIds));
+
+  if (distinctIds.length > 1) {
+    logger.error('vapi_webhook_business_resolution_conflict', {
+      vapiPhoneNumberId,
+      vapiAssistantId,
+      dialedNumber,
+      sourcesJson: JSON.stringify(sources)
+    });
+    return { conflict: true, sources };
+  }
+
+  if (distinctIds.length === 1) return { businessId: distinctIds[0], sources };
+  return { businessId: null };
 }
 
 export async function POST(req: NextRequest) {
@@ -61,7 +97,8 @@ export async function POST(req: NextRequest) {
 
   // Vapi sends { message: { type: 'function-call' | 'end-of-call-report' | ..., ... } }
   const message = body.message ?? body;
-  const businessId = await resolveBusinessId(message?.call, supabase);
+  const resolution = await resolveBusinessId(message?.call, supabase);
+  const businessId = 'businessId' in resolution ? resolution.businessId : null;
 
   const dedup = await checkDuplicateWebhook(rawBody, message.type ?? 'unknown', businessId);
   if (dedup.isDuplicate) {
@@ -80,21 +117,28 @@ export async function POST(req: NextRequest) {
   let status = 200;
   let responseBody: any;
 
-  switch (message.type) {
-    case 'function-call': {
-      const outcome = await handleFunctionCall(message, businessId, supabase);
-      status = outcome.status;
-      responseBody = outcome.body;
-      break;
+  if ('conflict' in resolution) {
+    // Never guess: a caller getting routed to the wrong business's menu or
+    // knowledge is worse than a call that fails loudly and gets escalated.
+    status = 409;
+    responseBody = { result: "I'm having a technical issue reaching your account — I'll have someone call you back." };
+  } else {
+    switch (message.type) {
+      case 'function-call': {
+        const outcome = await handleFunctionCall(message, businessId, supabase);
+        status = outcome.status;
+        responseBody = outcome.body;
+        break;
+      }
+      case 'end-of-call-report': {
+        const outcome = await handleEndOfCall(message, businessId, supabase);
+        status = outcome.status;
+        responseBody = outcome.body;
+        break;
+      }
+      default:
+        responseBody = { ok: true };
     }
-    case 'end-of-call-report': {
-      const outcome = await handleEndOfCall(message, businessId, supabase);
-      status = outcome.status;
-      responseBody = outcome.body;
-      break;
-    }
-    default:
-      responseBody = { ok: true };
   }
 
   await recordWebhookResponse(dedup.recordId, { status, body: responseBody });
@@ -139,14 +183,27 @@ async function handleEndOfCall(
     finalLanguage = existing?.active_language ?? existing?.detected_language ?? 'en';
   }
 
-  const translatedTranscript = transcript && finalLanguage !== 'en' ? await translateText(transcript, 'en') : null;
+  // Vapi always sends whatever it recorded/summarized regardless of our
+  // settings — collect_transcripts/generate_summaries are honored here,
+  // on our side, since Vapi has no per-toggle we can confidently PATCH for
+  // this without risking malforming the whole assistant config.
+  const { data: settings } = await supabase
+    .from('assistant_settings')
+    .select('collect_transcripts, generate_summaries')
+    .eq('business_id', businessId)
+    .maybeSingle();
+  const collectTranscripts = settings?.collect_transcripts ?? true;
+  const generateSummaries = settings?.generate_summaries ?? true;
+
+  const keptTranscript = collectTranscripts ? transcript : null;
+  const translatedTranscript = keptTranscript && finalLanguage !== 'en' ? await translateText(keptTranscript, 'en') : null;
 
   const updatePayload = {
     status: 'completed',
-    transcript,
+    transcript: keptTranscript,
     translated_transcript: translatedTranscript,
     recording_url: recordingUrl,
-    summary,
+    summary: generateSummaries ? summary : null,
     ended_at: new Date().toISOString()
   };
 
