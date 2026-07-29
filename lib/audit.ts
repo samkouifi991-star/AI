@@ -11,7 +11,8 @@ export type AuditAction =
   | 'refund_issued'
   | 'assistant_settings_changed'
   | 'onboarding_stage_completed'
-  | 'business_went_live';
+  | 'business_went_live'
+  | 'call_forwarding_disabled';
 
 /**
  * Records a sensitive action to audit_log. `metadata` is for context that

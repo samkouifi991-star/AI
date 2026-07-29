@@ -72,6 +72,35 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    case 'forwarding_verify': {
+      // Real verification, not a self-report: a call actually arrived at
+      // this business's AI number is a fact this server can check — a
+      // fresh row in `calls` within the last 15 minutes. Only that (or its
+      // absence) decides pass/pending; the customer's own click never does.
+      const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const { data: recentCalls } = await supabase
+        .from('calls')
+        .select('id, started_at')
+        .eq('business_id', business.id)
+        .gte('started_at', since)
+        .order('started_at', { ascending: false })
+        .limit(1);
+
+      if (recentCalls && recentCalls.length > 0) {
+        await supabase
+          .from('forwarding_setups')
+          .update({ last_test_status: 'pass', last_tested_at: new Date().toISOString() })
+          .eq('business_id', business.id);
+        const outcome = await record(supabase, business.id, 'forwarding_check', 'pass', { callId: recentCalls[0].id });
+        return NextResponse.json(outcome);
+      }
+
+      const outcome = await record(supabase, business.id, 'forwarding_check', 'pending', {
+        note: "We haven't seen a call reach your AI number yet. Place the test call, then check again — it can take a few seconds to show up."
+      });
+      return NextResponse.json(outcome);
+    }
+
     case 'forwarding_check':
     case 'inbound_call':
     case 'transfer': {

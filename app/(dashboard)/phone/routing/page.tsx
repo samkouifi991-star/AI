@@ -26,21 +26,34 @@ export default function RoutingPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [forwardingSetup, setForwardingSetup] = useState<any>(null);
+  const [aiDestination, setAiDestination] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
-      const res = await fetch('/api/phone/routing');
+      const [res, fRes] = await Promise.all([fetch('/api/phone/routing'), fetch('/api/phone/forwarding')]);
       const data = await res.json();
+      const fData = await fRes.json();
       if (data.rules) setRules(data.rules);
       if (data.destinations) {
         setDestinations(
           data.destinations.map((d: any) => ({ label: d.label, phoneNumber: d.phone_number, department: d.department ?? '', isEmergencyContact: d.is_emergency_contact }))
         );
       }
+      setForwardingSetup(fData.setup ?? null);
+      setAiDestination(fData.aiDestinationNumber ?? null);
       setLoading(false);
     }
     load();
   }, []);
+
+  function forwardingTypeLabel(setup: any): string {
+    if (setup.forward_all_calls) return 'All calls';
+    if (setup.forward_after_hours) return 'After business hours';
+    if (setup.forward_when_busy) return 'When busy';
+    if (setup.forward_missed_calls) return 'Only unanswered calls';
+    return 'Not set';
+  }
 
   async function save() {
     setSaving(true);
@@ -76,6 +89,33 @@ export default function RoutingPage() {
       </div>
 
       <PhoneSubNav />
+
+      {forwardingSetup && (
+        <section className="card space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-lg font-semibold">Call forwarding</h2>
+            <span className={forwardingSetup.forwarding_active === false ? 'badge-warning' : forwardingSetup.last_test_status === 'pass' ? 'badge-success' : 'badge-warning'}>
+              {forwardingSetup.forwarding_active === false ? 'Disabled' : forwardingSetup.last_test_status === 'pass' ? 'Active & verified' : 'Active, not yet tested'}
+            </span>
+          </div>
+          <div className="text-sm text-slate-600 space-y-1">
+            <div>Forwarding type: <span className="font-medium text-ink">{forwardingTypeLabel(forwardingSetup)}</span></div>
+            <div>Original business number: <span className="font-mono">{forwardingSetup.existing_number ?? 'Not set'}</span></div>
+            <div>AI number: <span className="font-mono">{aiDestination ?? 'Not set'}</span></div>
+            <div>
+              Last test:{' '}
+              {forwardingSetup.last_test_status === 'pass' && forwardingSetup.last_tested_at
+                ? `Succeeded on ${new Date(forwardingSetup.last_tested_at).toLocaleDateString()}`
+                : 'Not verified yet'}
+            </div>
+          </div>
+          <p className="text-xs text-slate-500">
+            Turning off call forwarding stops new calls from reaching your AI employee. Your AI number may still have
+            a monthly rental cost until you cancel or release it separately.
+          </p>
+          <a href="/phone/numbers" className="btn-secondary text-xs inline-block">Change or disable forwarding</a>
+        </section>
+      )}
 
       {saved && <div className="text-sm text-success bg-green-50 rounded-lg px-3 py-2">Saved.</div>}
 

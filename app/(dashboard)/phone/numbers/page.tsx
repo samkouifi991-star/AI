@@ -25,6 +25,11 @@ export default function PhoneNumbersPage() {
     fallbackTransferNumber: ''
   });
   const [savingForwarding, setSavingForwarding] = useState(false);
+  const [forwardingSetup, setForwardingSetup] = useState<any>(null);
+  const [testingForwarding, setTestingForwarding] = useState(false);
+  const [forwardTestMessage, setForwardTestMessage] = useState<string | null>(null);
+  const [showDisconnectInstructions, setShowDisconnectInstructions] = useState(false);
+  const [disablingForwarding, setDisablingForwarding] = useState(false);
 
   // Option B state
   const [searchParams, setSearchParams] = useState({ areaCode: '', numberType: 'local' as 'local' | 'toll_free' });
@@ -57,6 +62,7 @@ export default function PhoneNumbersPage() {
       setCarrierCodes(fData.carrierCodes ?? []);
       setAiDestination(fData.aiDestinationNumber);
       if (fData.setup) {
+        setForwardingSetup(fData.setup);
         setForwarding({
           existingNumber: fData.setup.existing_number ?? '',
           carrier: fData.setup.carrier ?? 'other',
@@ -94,13 +100,54 @@ export default function PhoneNumbersPage() {
 
   async function testForwarding() {
     setActionError(null);
+    setForwardTestMessage(null);
     const res = await fetch('/api/phone/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ testType: 'forwarding_check' })
     });
     const data = await res.json();
-    setActionSuccess(data.details?.instructions ?? 'Test recorded.');
+    setForwardTestMessage(data.details?.instructions ?? 'Now place that test call, then click "Check now" once it rings your AI.');
+  }
+
+  // Real verification, not a self-report: checks whether a call actually
+  // arrived at this business's AI number (see /api/phone/test
+  // forwarding_verify) rather than just trusting that the customer clicked
+  // a button.
+  async function checkForwardingVerified() {
+    setTestingForwarding(true);
+    const res = await fetch('/api/phone/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ testType: 'forwarding_verify' })
+    });
+    const data = await res.json();
+    setTestingForwarding(false);
+    if (data.status === 'pass') {
+      setForwardTestMessage('Verified — a call reached your AI number. Forwarding is working.');
+      const fRes = await fetch('/api/phone/forwarding');
+      const fData = await fRes.json();
+      setForwardingSetup(fData.setup ?? null);
+    } else {
+      setForwardTestMessage(data.details?.note ?? "We haven't seen the test call yet.");
+    }
+  }
+
+  async function confirmForwardingDisabled() {
+    if (!window.confirm('Confirm forwarding is off? New calls will stop reaching your AI employee until you turn it back on.')) return;
+    setDisablingForwarding(true);
+    const res = await fetch('/api/phone/forwarding/disable', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmed: true })
+    });
+    setDisablingForwarding(false);
+    if (res.ok) {
+      setActionSuccess('Forwarding marked as disabled. Your AI number is still active — release it separately below if you want to stop that too.');
+      const fRes = await fetch('/api/phone/forwarding');
+      const fData = await fRes.json();
+      setForwardingSetup(fData.setup ?? null);
+    }
   }
 
   async function searchNumbers() {
@@ -268,8 +315,56 @@ export default function PhoneNumbersPage() {
 
           <div className="flex gap-3">
             <button className="btn-primary" onClick={saveForwarding} disabled={savingForwarding}>{savingForwarding ? 'Saving…' : 'Save forwarding setup'}</button>
-            <button className="btn-secondary" onClick={testForwarding}>Test forwarding</button>
+            <button className="btn-secondary" onClick={testForwarding} disabled={testingForwarding}>I&apos;ve set up forwarding — test it</button>
+            <button className="btn-secondary" onClick={checkForwardingVerified} disabled={testingForwarding}>{testingForwarding ? 'Checking…' : 'Check now'}</button>
           </div>
+          {forwardTestMessage && <div className="text-sm text-slate-600 bg-slate-50 rounded-lg px-3 py-2">{forwardTestMessage}</div>}
+          {forwardingSetup?.last_test_status === 'pass' && (
+            <span className="badge-success inline-block">Verified {forwardingSetup.last_tested_at ? new Date(forwardingSetup.last_tested_at).toLocaleDateString() : ''}</span>
+          )}
+
+          {forwardingSetup && (
+            <div className="space-y-2 pt-3 border-t border-slate-100">
+              <h3 className="font-display font-semibold text-sm">Stop forwarding calls</h3>
+              <p className="text-xs text-slate-500">
+                You can disable forwarding whenever you want — your original business number will then ring normally
+                again. Your AI number stays active unless you separately disconnect or cancel it. Disabling forwarding
+                does not automatically release your AI number or stop number-rental charges.
+              </p>
+              <span className={forwardingSetup.forwarding_active === false ? 'badge-warning inline-block' : 'badge-success inline-block'}>
+                {forwardingSetup.forwarding_active === false ? 'Forwarding disabled' : 'Forwarding active'}
+              </span>
+              <div>
+                <button className="btn-secondary text-xs" onClick={() => setShowDisconnectInstructions((v) => !v)}>
+                  {showDisconnectInstructions ? 'Hide disconnect instructions' : 'Show disconnect instructions'}
+                </button>
+              </div>
+              {showDisconnectInstructions &&
+                (() => {
+                  const c = carrierCodes.find((c) => c.carrier === forwarding.carrier);
+                  return (
+                    <div className="bg-slate-50 rounded-lg p-3 text-sm space-y-2">
+                      {c ? (
+                        <>
+                          {c.forward_all_cancel_code && <div>Cancel all-call forwarding: <span className="font-mono">{c.forward_all_cancel_code}</span>, then press Call.</div>}
+                          {c.forward_no_answer_cancel_code && <div>Cancel no-answer forwarding: <span className="font-mono">{c.forward_no_answer_cancel_code}</span>, then press Call.</div>}
+                          {c.forward_busy_cancel_code && <div>Cancel busy forwarding: <span className="font-mono">{c.forward_busy_cancel_code}</span>, then press Call.</div>}
+                          {!c.forward_all_cancel_code && !c.forward_no_answer_cancel_code && (
+                            <div className="text-warning">We don&apos;t have a published cancellation code for this carrier — contact them directly.</div>
+                          )}
+                          <p className="text-xs text-slate-500">Confirm it worked by calling your business number and hearing it ring normally, not your AI.</p>
+                        </>
+                      ) : (
+                        <div className="text-warning">Contact your carrier for instructions specific to your plan.</div>
+                      )}
+                    </div>
+                  );
+                })()}
+              <button className="btn-secondary text-xs" onClick={confirmForwardingDisabled} disabled={disablingForwarding || forwardingSetup.forwarding_active === false}>
+                {disablingForwarding ? 'Saving…' : 'I turned off call forwarding'}
+              </button>
+            </div>
+          )}
         </section>
       )}
 

@@ -55,11 +55,35 @@ export default function OnboardingWizard() {
   const [form, setForm] = useState({ business_type: 'service' as 'service' | 'restaurant', name: '', phone_number: '', service_area: '' });
 
   // Stage: phone
-  const [phoneOption, setPhoneOption] = useState<'forward' | 'buy' | null>(null);
+  const [phoneOption, setPhoneOption] = useState<'forward' | 'buy' | 'connect_existing' | null>(null);
   const [existingNumber, setExistingNumber] = useState('');
   const [areaCode, setAreaCode] = useState('');
   const [numberResults, setNumberResults] = useState<any[]>([]);
   const [phoneBusy, setPhoneBusy] = useState(false);
+  const [phoneNumbers, setPhoneNumbers] = useState<any[]>([]);
+  const [phoneDataLoaded, setPhoneDataLoaded] = useState(false);
+
+  // Phone: connect an existing Twilio number
+  const [twilioCreds, setTwilioCreds] = useState({ accountSid: '', authToken: '' });
+  const [twilioConnStatus, setTwilioConnStatus] = useState<any>(null);
+  const [connectingTwilio, setConnectingTwilio] = useState(false);
+  const [byoNumbers, setByoNumbers] = useState<any[]>([]);
+  const [importingSid, setImportingSid] = useState<string | null>(null);
+
+  // Phone: keep current number + forward calls
+  const [forwardSubStep, setForwardSubStep] = useState<'get_number' | 'details' | 'test'>('get_number');
+  const [forwardType, setForwardType] = useState<'all' | 'unanswered' | 'delay' | 'after_hours'>('unanswered');
+  const [forwardCarrier, setForwardCarrier] = useState('other');
+  const [carrierCodes, setCarrierCodes] = useState<any[]>([]);
+  const [aiDestination, setAiDestination] = useState<string | null>(null);
+  const [forwardingSetup, setForwardingSetup] = useState<any>(null);
+  const [savingForwarding, setSavingForwarding] = useState(false);
+  const [testingForwarding, setTestingForwarding] = useState(false);
+  const [forwardTestMessage, setForwardTestMessage] = useState<string | null>(null);
+  const [showDisconnectInstructions, setShowDisconnectInstructions] = useState(false);
+  const [disablingForwarding, setDisablingForwarding] = useState(false);
+  const [disableConfirmed, setDisableConfirmed] = useState(false);
+  const [forwardGetNumberMethod, setForwardGetNumberMethod] = useState<'buy' | 'connect_existing' | null>(null);
 
   // Stage: voice
   const [voices, setVoices] = useState<any[]>([]);
@@ -187,18 +211,49 @@ export default function OnboardingWizard() {
   }
 
   // ---- Stage: phone ----
-  async function saveForwarding() {
-    setPhoneBusy(true);
-    setError(null);
-    const res = await fetch('/api/phone/forwarding', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ existingNumber, forwardMissedCalls: true, forwardWhenBusy: true })
-    });
-    setPhoneBusy(false);
-    if (!res.ok) return setError((await res.json()).error);
-    markComplete('phone');
+  const hasActiveAiNumber = phoneNumbers.some((n) => n.status === 'active');
+
+  async function loadPhoneStageData() {
+    const [numRes, fRes, tRes] = await Promise.all([
+      fetch('/api/phone/numbers'),
+      fetch('/api/phone/forwarding'),
+      fetch('/api/phone/twilio-connect')
+    ]);
+    const numData = await numRes.json();
+    const fData = await fRes.json();
+    const tData = await tRes.json();
+
+    const numbers = numData.numbers ?? [];
+    setPhoneNumbers(numbers);
+    setCarrierCodes(fData.carrierCodes ?? []);
+    setAiDestination(fData.aiDestinationNumber);
+    setTwilioConnStatus(tData.connection);
+
+    const activeAiNumber = numbers.some((n: any) => n.status === 'active');
+
+    if (fData.setup) {
+      setForwardingSetup(fData.setup);
+      setExistingNumber(fData.setup.existing_number ?? '');
+      setForwardCarrier(fData.setup.carrier ?? 'other');
+      setForwardType(
+        fData.setup.forward_all_calls ? 'all' : fData.setup.forward_after_hours ? 'after_hours' : fData.setup.forward_missed_calls ? 'unanswered' : 'unanswered'
+      );
+      if (!phoneOption) setPhoneOption('forward');
+      setForwardSubStep(!activeAiNumber ? 'get_number' : !fData.setup.existing_number ? 'details' : 'test');
+    } else if (numbers.some((n: any) => n.source === 'imported_byo')) {
+      if (!phoneOption) setPhoneOption('connect_existing');
+    } else if (activeAiNumber) {
+      if (!phoneOption) setPhoneOption('buy');
+    }
+
+    setPhoneDataLoaded(true);
   }
+
+  useEffect(() => {
+    if (stage !== 'phone' || phoneDataLoaded) return;
+    loadPhoneStageData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, phoneDataLoaded]);
 
   async function searchNumbers() {
     setPhoneBusy(true);
@@ -210,7 +265,11 @@ export default function OnboardingWizard() {
     setNumberResults(data.results ?? []);
   }
 
-  async function buyNumber(phoneNumber: string, price: number | null) {
+  // completeAfter: whether a successful purchase should finish the Phone
+  // step outright ('buy' chosen directly) or just satisfy step 1 of the
+  // forwarding flow ('forward' chosen — an AI number is still needed
+  // before forwarding, business number, and a test can happen).
+  async function buyNumber(phoneNumber: string, price: number | null, completeAfter: boolean) {
     const priceLabel = price ? `$${price}/month` : 'a recurring monthly fee';
     if (!window.confirm(`This purchases ${phoneNumber} through Twilio for real — ${priceLabel}, charged to your connected Twilio account. Continue?`)) {
       return;
@@ -225,7 +284,122 @@ export default function OnboardingWizard() {
     const data = await res.json();
     setPhoneBusy(false);
     if (!res.ok) return setError(`${data.error}${data.failedStep ? ` (${data.failedStep})` : ''}`);
-    markComplete('phone');
+    await loadPhoneStageData0();
+    if (completeAfter) {
+      markComplete('phone');
+    } else {
+      setForwardSubStep('details');
+    }
+  }
+
+  // Re-fetch without the "only load once" guard, for after an action
+  // changes phone state mid-stage.
+  async function loadPhoneStageData0() {
+    setPhoneDataLoaded(false);
+    await loadPhoneStageData();
+  }
+
+  async function connectTwilioByo() {
+    setConnectingTwilio(true);
+    setError(null);
+    const res = await fetch('/api/phone/twilio-connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(twilioCreds)
+    });
+    const data = await res.json();
+    setConnectingTwilio(false);
+    if (!res.ok) return setError(data.error);
+    setTwilioConnStatus({ status: 'connected' });
+    setTwilioCreds({ accountSid: '', authToken: '' });
+    const numRes = await fetch('/api/phone/twilio-connect/numbers');
+    const numData = await numRes.json();
+    setByoNumbers(numData.numbers ?? []);
+  }
+
+  async function importByoNumber(sid: string, phoneNumber: string, completeAfter: boolean) {
+    setImportingSid(sid);
+    setError(null);
+    const res = await fetch('/api/phone/twilio-connect/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ twilioSid: sid, phoneNumber })
+    });
+    const data = await res.json();
+    setImportingSid(null);
+    if (!res.ok) return setError(`${data.error}${data.failedStep ? ` (${data.failedStep})` : ''}`);
+    await loadPhoneStageData0();
+    if (completeAfter) {
+      markComplete('phone');
+    } else {
+      setForwardSubStep('details');
+    }
+  }
+
+  async function saveForwardingDetails() {
+    setSavingForwarding(true);
+    setError(null);
+    const res = await fetch('/api/phone/forwarding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        existingNumber,
+        carrier: forwardCarrier,
+        forwardAllCalls: forwardType === 'all' || forwardType === 'after_hours',
+        forwardMissedCalls: forwardType === 'unanswered' || forwardType === 'delay',
+        forwardWhenBusy: false,
+        forwardAfterHours: forwardType === 'after_hours'
+      })
+    });
+    setSavingForwarding(false);
+    if (!res.ok) return setError((await res.json()).error);
+    await loadPhoneStageData0();
+    setForwardSubStep('test');
+  }
+
+  async function runForwardingTest() {
+    setTestingForwarding(true);
+    setForwardTestMessage(null);
+    await fetch('/api/phone/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ testType: 'forwarding_check' })
+    });
+    setTestingForwarding(false);
+    setForwardTestMessage('Now place that test call from another phone, then click "Check now" below once it rings your AI.');
+  }
+
+  async function checkForwardingVerified() {
+    setTestingForwarding(true);
+    const res = await fetch('/api/phone/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ testType: 'forwarding_verify' })
+    });
+    const data = await res.json();
+    setTestingForwarding(false);
+    if (data.status === 'pass') {
+      setForwardTestMessage("Verified — a call reached your AI number. Forwarding is working.");
+      await loadPhoneStageData0();
+      markComplete('phone');
+    } else {
+      setForwardTestMessage(data.details?.note ?? "We haven't seen the test call yet.");
+    }
+  }
+
+  async function confirmForwardingDisabled() {
+    if (!window.confirm('Confirm forwarding is off? New calls will stop reaching your AI employee until you turn it back on.')) return;
+    setDisablingForwarding(true);
+    const res = await fetch('/api/phone/forwarding/disable', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmed: true })
+    });
+    setDisablingForwarding(false);
+    if (res.ok) {
+      setDisableConfirmed(true);
+      await loadPhoneStageData0();
+    }
   }
 
   // ---- Stage: voice ----
@@ -408,6 +582,23 @@ export default function OnboardingWizard() {
 
   const stageIndex = STAGES.indexOf(stage);
 
+  // Honest, plain-language status for the Phone step — reflects what has
+  // actually been verified (a real purchase/import/read-back, or a real
+  // test call landing in `calls`), never just "the user clicked something."
+  function phoneStageStatus(): { label: string; tone: string } {
+    if (error) return { label: 'Failed', tone: 'badge-danger' };
+    if (completed.includes('phone')) return { label: 'Phone verified', tone: 'badge-success' };
+    if (phoneOption === 'buy' && phoneBusy) return { label: 'Purchasing number', tone: 'badge-warning' };
+    if (phoneOption === 'connect_existing' && (connectingTwilio || importingSid)) return { label: 'Connecting number', tone: 'badge-warning' };
+    if (phoneOption === 'forward') {
+      if (!hasActiveAiNumber) return phoneBusy ? { label: 'Purchasing number', tone: 'badge-warning' } : { label: 'Number required', tone: 'badge-warning' };
+      if (forwardSubStep === 'test') return { label: 'Call forwarding not tested', tone: 'badge-warning' };
+      return { label: 'Awaiting selection', tone: 'badge-warning' };
+    }
+    if (!phoneOption) return { label: 'Number required', tone: 'badge-warning' };
+    return { label: 'Awaiting selection', tone: 'badge-warning' };
+  }
+
   if (loading) return <div className="max-w-2xl card">Loading…</div>;
 
   return (
@@ -479,36 +670,321 @@ export default function OnboardingWizard() {
       )}
 
       {stage === 'phone' && (
-        <section className="card space-y-4">
-          <h2 className="font-display text-lg font-semibold">Do you want to keep your current number, or get a new one?</h2>
-          <div className="flex gap-2">
-            <button className={phoneOption === 'forward' ? 'btn-primary text-sm' : 'btn-secondary text-sm'} onClick={() => setPhoneOption('forward')}>Keep my current number</button>
-            <button className={phoneOption === 'buy' ? 'btn-primary text-sm' : 'btn-secondary text-sm'} onClick={() => setPhoneOption('buy')}>Get a new number</button>
-          </div>
-
-          {phoneOption === 'forward' && (
-            <div className="space-y-2">
-              <input className="input" placeholder="Your existing business number" value={existingNumber} onChange={(e) => setExistingNumber(e.target.value)} />
-              <button className="btn-primary" onClick={saveForwarding} disabled={phoneBusy}>{phoneBusy ? 'Saving…' : 'Save and continue'}</button>
-              <p className="text-xs text-slate-500">You&apos;ll get carrier-specific forwarding instructions in full Phone Settings after setup.</p>
-            </div>
-          )}
-
-          {phoneOption === 'buy' && (
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <input className="input" placeholder="Area code" value={areaCode} onChange={(e) => setAreaCode(e.target.value)} />
-                <button className="btn-secondary" onClick={searchNumbers} disabled={phoneBusy}>Search</button>
+        <div className="space-y-4">
+          <section className="card space-y-2">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-display text-lg font-semibold">How would you like customers to reach your AI employee?</h2>
+                <p className="text-sm text-slate-600 mt-1">
+                  Every business needs an AI-enabled phone number. You can get a new number, connect a Twilio number
+                  you already own, or keep your current business number and forward calls to your AI number.
+                </p>
               </div>
-              {numberResults.map((r) => (
-                <div key={r.phoneNumber} className="border border-slate-200 rounded-lg p-2 flex items-center justify-between text-sm">
-                  <span>{r.phoneNumber} {r.monthlyPrice ? `· $${r.monthlyPrice}/mo` : ''}</span>
-                  <button className="btn-primary text-xs" onClick={() => buyNumber(r.phoneNumber, r.monthlyPrice)} disabled={phoneBusy}>Buy</button>
-                </div>
-              ))}
+              <span className={phoneStageStatus().tone}>{phoneStageStatus().label}</span>
             </div>
-          )}
-        </section>
+          </section>
+
+          {error && <div className="text-sm text-danger bg-red-50 rounded-lg px-3 py-2">{error}</div>}
+
+          {/* Option 1: Get a new AI number */}
+          <section className={`card space-y-3 ${phoneOption === 'buy' ? 'ring-2 ring-brand-500' : ''}`}>
+            <h3 className="font-display font-semibold">1. Get a new AI number</h3>
+            <p className="text-xs text-slate-500">Use this if you don&apos;t already have a suitable Twilio number.</p>
+            <ul className="text-sm text-slate-600 list-disc list-inside space-y-0.5">
+              <li>We&apos;ll help you choose and purchase a new Twilio number.</li>
+              <li>It connects automatically to your Business Pilot AI assistant.</li>
+              <li>You can publish this number as your new business number.</li>
+              <li>Phone-number rental and usage charges may apply.</li>
+              <li>You&apos;ll be asked to confirm before anything is purchased.</li>
+            </ul>
+            {phoneOption !== 'buy' ? (
+              <button className="btn-primary text-sm" onClick={() => setPhoneOption('buy')}>Get a new AI number</button>
+            ) : (
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <div className="flex gap-2">
+                  <input className="input" placeholder="Area code" value={areaCode} onChange={(e) => setAreaCode(e.target.value)} />
+                  <button className="btn-secondary" onClick={searchNumbers} disabled={phoneBusy}>Search</button>
+                </div>
+                {numberResults.map((r) => (
+                  <div key={r.phoneNumber} className="border border-slate-200 rounded-lg p-2 flex items-center justify-between text-sm">
+                    <span>{r.phoneNumber} {r.monthlyPrice ? `· $${r.monthlyPrice}/mo` : ''}</span>
+                    <button className="btn-primary text-xs" onClick={() => buyNumber(r.phoneNumber, r.monthlyPrice, true)} disabled={phoneBusy}>
+                      {phoneBusy ? 'Purchasing…' : 'Buy this number'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Option 2: Connect an existing Twilio number */}
+          <section className={`card space-y-3 ${phoneOption === 'connect_existing' ? 'ring-2 ring-brand-500' : ''}`}>
+            <h3 className="font-display font-semibold">2. Connect an existing Twilio number</h3>
+            <p className="text-xs text-slate-500">Use this if you already own a Twilio number.</p>
+            <ul className="text-sm text-slate-600 list-disc list-inside space-y-0.5">
+              <li>Import or connect your existing Twilio number.</li>
+              <li>We&apos;ll connect it to your new Vapi assistant.</li>
+              <li>The number must support voice.</li>
+              <li>Ownership and the provider connection are verified before it&apos;s marked ready.</li>
+            </ul>
+            {phoneOption !== 'connect_existing' ? (
+              <button className="btn-primary text-sm" onClick={() => setPhoneOption('connect_existing')}>Connect my Twilio number</button>
+            ) : (
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                {twilioConnStatus?.status === 'connected' ? (
+                  <div className="space-y-2">
+                    <span className="badge-success inline-block">Twilio connected</span>
+                    {byoNumbers.length === 0 && (
+                      <button
+                        className="btn-secondary text-xs block"
+                        onClick={async () => {
+                          const res = await fetch('/api/phone/twilio-connect/numbers');
+                          const data = await res.json();
+                          setByoNumbers(data.numbers ?? []);
+                        }}
+                      >
+                        Load my Twilio numbers
+                      </button>
+                    )}
+                    {byoNumbers.map((n) => (
+                      <div key={n.sid} className="border border-slate-200 rounded-lg p-2 flex items-center justify-between text-sm">
+                        <div>
+                          <div>{n.phoneNumber}</div>
+                          {!n.capabilities?.voice && <div className="text-xs text-danger">Doesn&apos;t support voice — can&apos;t be used for calls.</div>}
+                        </div>
+                        <button
+                          className="btn-primary text-xs"
+                          onClick={() => importByoNumber(n.sid, n.phoneNumber, true)}
+                          disabled={importingSid === n.sid || !n.capabilities?.voice}
+                        >
+                          {importingSid === n.sid ? 'Connecting…' : 'Connect this number'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-500">
+                      Enter your Twilio Account SID and Auth Token. Your token is encrypted before it&apos;s stored and never shown again.
+                    </p>
+                    <input className="input" placeholder="Account SID" value={twilioCreds.accountSid} onChange={(e) => setTwilioCreds((c) => ({ ...c, accountSid: e.target.value }))} />
+                    <input className="input" type="password" placeholder="Auth Token" value={twilioCreds.authToken} onChange={(e) => setTwilioCreds((c) => ({ ...c, authToken: e.target.value }))} />
+                    <button className="btn-primary text-sm" onClick={connectTwilioByo} disabled={connectingTwilio}>
+                      {connectingTwilio ? 'Connecting…' : 'Connect Twilio account'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* Option 3: Keep current number, forward to AI */}
+          <section className={`card space-y-3 ${phoneOption === 'forward' ? 'ring-2 ring-brand-500' : ''}`}>
+            <h3 className="font-display font-semibold">3. Keep my current business number</h3>
+            <p className="text-xs text-slate-500">Use this if you want customers to keep calling the number they already know.</p>
+            <ul className="text-sm text-slate-600 list-disc list-inside space-y-0.5">
+              <li>You still need a separate AI number — forwarding needs somewhere to send calls to.</li>
+              <li>Your current business number forwards calls to that AI number.</li>
+              <li>Customers keep dialing the number they already know.</li>
+              <li>Business Pilot AI answers the forwarded calls.</li>
+              <li>Choose: forward all calls, only unanswered calls, after a ring delay, or after business hours.</li>
+              <li>Call forwarding is controlled by your carrier and may create carrier charges.</li>
+            </ul>
+            {phoneOption !== 'forward' ? (
+              <button className="btn-primary text-sm" onClick={() => setPhoneOption('forward')}>Keep my current number</button>
+            ) : (
+              <div className="space-y-4 pt-2 border-t border-slate-100">
+                {/* Step 1: get or connect an AI number */}
+                {!hasActiveAiNumber && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Step 1: Get or connect an AI number first</p>
+                    <div className="flex gap-2">
+                      <button className={forwardGetNumberMethod === 'buy' ? 'btn-primary text-xs' : 'btn-secondary text-xs'} onClick={() => setForwardGetNumberMethod('buy')}>New number</button>
+                      <button className={forwardGetNumberMethod === 'connect_existing' ? 'btn-primary text-xs' : 'btn-secondary text-xs'} onClick={() => setForwardGetNumberMethod('connect_existing')}>Connect Twilio number</button>
+                    </div>
+                    {forwardGetNumberMethod === 'buy' && (
+                      <div className="space-y-2">
+                        <div className="flex gap-2">
+                          <input className="input" placeholder="Area code" value={areaCode} onChange={(e) => setAreaCode(e.target.value)} />
+                          <button className="btn-secondary" onClick={searchNumbers} disabled={phoneBusy}>Search</button>
+                        </div>
+                        {numberResults.map((r) => (
+                          <div key={r.phoneNumber} className="border border-slate-200 rounded-lg p-2 flex items-center justify-between text-sm">
+                            <span>{r.phoneNumber} {r.monthlyPrice ? `· $${r.monthlyPrice}/mo` : ''}</span>
+                            <button className="btn-primary text-xs" onClick={() => buyNumber(r.phoneNumber, r.monthlyPrice, false)} disabled={phoneBusy}>
+                              {phoneBusy ? 'Purchasing…' : 'Buy this number'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {forwardGetNumberMethod === 'connect_existing' && (
+                      <div className="space-y-2">
+                        {twilioConnStatus?.status === 'connected' ? (
+                          <div className="space-y-2">
+                            {byoNumbers.length === 0 && (
+                              <button
+                                className="btn-secondary text-xs"
+                                onClick={async () => {
+                                  const res = await fetch('/api/phone/twilio-connect/numbers');
+                                  const data = await res.json();
+                                  setByoNumbers(data.numbers ?? []);
+                                }}
+                              >
+                                Load my Twilio numbers
+                              </button>
+                            )}
+                            {byoNumbers.map((n) => (
+                              <div key={n.sid} className="border border-slate-200 rounded-lg p-2 flex items-center justify-between text-sm">
+                                <span>{n.phoneNumber}</span>
+                                <button className="btn-primary text-xs" onClick={() => importByoNumber(n.sid, n.phoneNumber, false)} disabled={importingSid === n.sid || !n.capabilities?.voice}>
+                                  {importingSid === n.sid ? 'Connecting…' : 'Connect'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <input className="input" placeholder="Account SID" value={twilioCreds.accountSid} onChange={(e) => setTwilioCreds((c) => ({ ...c, accountSid: e.target.value }))} />
+                            <input className="input" type="password" placeholder="Auth Token" value={twilioCreds.authToken} onChange={(e) => setTwilioCreds((c) => ({ ...c, authToken: e.target.value }))} />
+                            <button className="btn-primary text-sm" onClick={connectTwilioByo} disabled={connectingTwilio}>
+                              {connectingTwilio ? 'Connecting…' : 'Connect Twilio account'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Step 2 & 3: business number + forwarding behavior */}
+                {hasActiveAiNumber && forwardSubStep === 'details' && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium">Step 2: Your current business number</p>
+                    <input className="input" placeholder="Your existing business number" value={existingNumber} onChange={(e) => setExistingNumber(e.target.value)} />
+
+                    <p className="text-sm font-medium">Step 3: When should calls forward?</p>
+                    {[
+                      ['all', 'Forward all calls'],
+                      ['unanswered', 'Forward only unanswered calls'],
+                      ['delay', 'Forward after a ring delay'],
+                      ['after_hours', 'Forward after business hours']
+                    ].map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-2 text-sm">
+                        <input type="radio" name="forwardType" checked={forwardType === key} onChange={() => setForwardType(key as any)} />
+                        {label}
+                      </label>
+                    ))}
+                    {forwardType === 'after_hours' && (
+                      <p className="text-xs text-warning bg-amber-50 rounded-lg px-3 py-2">
+                        Most carriers can&apos;t automatically turn forwarding on and off by time of day. We&apos;ll forward all
+                        calls to your AI number, and you can set your AI to only answer after hours (and ring your business
+                        first during open hours) from Call Routing once setup is done.
+                      </p>
+                    )}
+
+                    <p className="text-sm font-medium">Step 4: Your carrier</p>
+                    <select className="input max-w-xs" value={forwardCarrier} onChange={(e) => setForwardCarrier(e.target.value)}>
+                      {carrierCodes.map((c) => (
+                        <option key={c.carrier} value={c.carrier}>{c.display_name}</option>
+                      ))}
+                    </select>
+                    {carrierCodes.find((c) => c.carrier === forwardCarrier) &&
+                      (() => {
+                        const c = carrierCodes.find((c) => c.carrier === forwardCarrier);
+                        const dest = aiDestination ?? '[your AI number]';
+                        const code =
+                          forwardType === 'all' || forwardType === 'after_hours'
+                            ? c.forward_all_code
+                            : c.forward_no_answer_code;
+                        return (
+                          <div className="bg-slate-50 rounded-lg p-3 text-sm space-y-1">
+                            {code ? (
+                              <div>Dial: <span className="font-mono">{code.replace('{number}', dest)}</span>, then press Call.</div>
+                            ) : (
+                              <div className="text-warning">We don&apos;t have a published code for this carrier and forwarding type — contact your carrier for instructions.</div>
+                            )}
+                            {c.notes && <p className="text-xs text-slate-500">{c.notes}</p>}
+                          </div>
+                        );
+                      })()}
+
+                    <button className="btn-primary" onClick={saveForwardingDetails} disabled={savingForwarding || !existingNumber}>
+                      {savingForwarding ? 'Saving…' : 'Save and continue to test'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Step 5 & 6: test + verify */}
+                {hasActiveAiNumber && forwardSubStep === 'test' && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium">Step 5: Test forwarding</p>
+                    <p className="text-sm text-slate-600">
+                      From a different phone, call your business number ({existingNumber || 'the number you entered'}).
+                      It should ring your AI employee.
+                    </p>
+                    <div className="flex gap-2">
+                      <button className="btn-secondary text-sm" onClick={runForwardingTest} disabled={testingForwarding}>
+                        {testingForwarding ? 'Working…' : "I've set up forwarding — test it"}
+                      </button>
+                      <button className="btn-primary text-sm" onClick={checkForwardingVerified} disabled={testingForwarding}>
+                        {testingForwarding ? 'Checking…' : 'Check now'}
+                      </button>
+                    </div>
+                    {forwardTestMessage && <div className="text-sm text-slate-600 bg-slate-50 rounded-lg px-3 py-2">{forwardTestMessage}</div>}
+                    <button className="text-xs text-slate-500 underline" onClick={() => setForwardSubStep('details')}>Change forwarding details</button>
+                  </div>
+                )}
+
+                {/* Stop forwarding — always available once forwarding exists */}
+                {forwardingSetup && (
+                  <div className="space-y-2 pt-3 border-t border-slate-100">
+                    <p className="text-sm font-medium">Stop forwarding calls</p>
+                    <p className="text-xs text-slate-500">
+                      You can disable forwarding whenever you want — your original business number will then ring
+                      normally again. Your AI number stays active unless you separately disconnect or cancel it.
+                      Disabling forwarding does not automatically release your AI number or stop number-rental charges.
+                    </p>
+                    <button className="btn-secondary text-xs" onClick={() => setShowDisconnectInstructions((v) => !v)}>
+                      {showDisconnectInstructions ? 'Hide disconnect instructions' : 'Show disconnect instructions'}
+                    </button>
+                    {showDisconnectInstructions &&
+                      (() => {
+                        const c = carrierCodes.find((c) => c.carrier === forwardCarrier);
+                        return (
+                          <div className="bg-slate-50 rounded-lg p-3 text-sm space-y-2">
+                            {c ? (
+                              <>
+                                {c.forward_all_cancel_code && <div>Cancel all-call forwarding: <span className="font-mono">{c.forward_all_cancel_code}</span>, then press Call.</div>}
+                                {c.forward_no_answer_cancel_code && <div>Cancel no-answer forwarding: <span className="font-mono">{c.forward_no_answer_cancel_code}</span>, then press Call.</div>}
+                                {c.forward_busy_cancel_code && <div>Cancel busy forwarding: <span className="font-mono">{c.forward_busy_cancel_code}</span>, then press Call.</div>}
+                                {!c.forward_all_cancel_code && !c.forward_no_answer_cancel_code && (
+                                  <div className="text-warning">We don&apos;t have a published cancellation code for this carrier — contact them directly.</div>
+                                )}
+                                <p className="text-xs text-slate-500">Confirm it worked by calling your business number and hearing it ring normally, not your AI.</p>
+                              </>
+                            ) : (
+                              <div className="text-warning">Contact your carrier for instructions specific to your plan.</div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    <div className="flex gap-2 pt-1">
+                      <button className="btn-secondary text-xs" onClick={confirmForwardingDisabled} disabled={disablingForwarding}>
+                        {disablingForwarding ? 'Saving…' : 'I turned off call forwarding'}
+                      </button>
+                    </div>
+                    {disableConfirmed && (
+                      <div className="text-xs text-success bg-green-50 rounded-lg px-3 py-2">
+                        Forwarding marked as disabled. Your AI number is still active — go to Phone Management if you want to release it separately.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
       )}
 
       {stage === 'voice' && (
