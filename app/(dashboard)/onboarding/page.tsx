@@ -157,6 +157,16 @@ export default function OnboardingWizard() {
     saveProgress(nextStage, next);
   }
 
+  // Lets the owner jump back into any step they've already finished (or
+  // the one they're on) to change something — doesn't touch `completed`,
+  // so nothing already done gets un-checked just by revisiting it. Steps
+  // not yet reached aren't clickable — skipping ahead of unfinished setup
+  // (e.g. testing before a number is connected) isn't what "go back" means.
+  function goToStage(s: Stage) {
+    if (s === stage) return;
+    saveProgress(s, completed);
+  }
+
   // ---- Stage: business ----
   async function submitBusiness() {
     setSaving(true);
@@ -413,13 +423,31 @@ export default function OnboardingWizard() {
         ))}
       </div>
       <div className="flex flex-wrap gap-2 text-xs text-slate-500">
-        {STAGES.map((s) => (
-          <span key={s} className={completed.includes(s) ? 'text-success font-medium' : s === stage ? 'text-ink font-medium' : ''}>
-            {completed.includes(s) ? '✓ ' : '○ '}
-            {STAGE_LABELS[s]}
-          </span>
-        ))}
+        {STAGES.map((s) => {
+          const reachable = completed.includes(s) || s === stage;
+          return (
+            <button
+              key={s}
+              type="button"
+              onClick={() => goToStage(s)}
+              disabled={!reachable}
+              title={reachable ? `Go to ${STAGE_LABELS[s]}` : 'Finish earlier steps first'}
+              className={
+                (completed.includes(s) ? 'text-success font-medium' : s === stage ? 'text-ink font-medium' : 'text-slate-400') +
+                (reachable ? ' hover:underline cursor-pointer' : ' cursor-not-allowed')
+              }
+            >
+              {completed.includes(s) ? '✓ ' : '○ '}
+              {STAGE_LABELS[s]}
+            </button>
+          );
+        })}
       </div>
+      {completed.includes(stage) && (
+        <p className="text-xs text-slate-500">
+          You&apos;ve already completed this step — make any changes below and save, or move on to another step above.
+        </p>
+      )}
 
       {error && <div className="text-sm text-danger bg-red-50 rounded-lg px-3 py-2">{error}</div>}
 
