@@ -19,6 +19,27 @@ const STAGE_LABELS: Record<Stage, string> = {
   go_live: 'Go Live'
 };
 
+// Mirrors the shape /api/phone/assistant-settings expects — that route
+// upserts every one of these fields, so a save from here has to send the
+// full object (loaded first) rather than just the one field this step
+// edits, or it would silently blank out settings saved elsewhere.
+const ASSISTANT_SETTINGS_DEFAULTS = {
+  name: 'AI Receptionist',
+  firstMessage: '',
+  systemPromptOverride: '',
+  language: 'en',
+  fallbackLanguage: '',
+  speakingSpeed: 1.0,
+  interruptionSensitivity: 'medium',
+  silenceTimeoutSeconds: 10,
+  callTimeoutSeconds: 1800,
+  voicemailBehavior: 'leave_message',
+  recordCalls: true,
+  collectTranscripts: true,
+  generateSummaries: true,
+  advancedModeEnabled: false
+};
+
 export default function OnboardingWizard() {
   const supabase = supabaseBrowser();
   const router = useRouter();
@@ -47,6 +68,17 @@ export default function OnboardingWizard() {
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Stage: knowledge
+  const [assistantSettings, setAssistantSettings] = useState(ASSISTANT_SETTINGS_DEFAULTS);
+  const [instructionsSaving, setInstructionsSaving] = useState(false);
+  const [instructionsResult, setInstructionsResult] = useState<string | null>(null);
+  const [websiteUrl, setWebsiteUrl] = useState('');
+  const [websiteImporting, setWebsiteImporting] = useState(false);
+  const [websiteImportResult, setWebsiteImportResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [kbUploading, setKbUploading] = useState(false);
+  const [kbUploadedNames, setKbUploadedNames] = useState<string[]>([]);
+  const [kbError, setKbError] = useState<string | null>(null);
 
   // Stage: calendar
   const [calendarConnected, setCalendarConnected] = useState(false);
@@ -240,6 +272,115 @@ export default function OnboardingWizard() {
   }
 
   // ---- Stage: knowledge ----
+  const [assistantSettingsLoaded, setAssistantSettingsLoaded] = useState(false);
+  useEffect(() => {
+    if (stage !== 'knowledge' || assistantSettingsLoaded) return;
+    setAssistantSettingsLoaded(true);
+    fetch('/api/phone/assistant-settings')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.settings) return;
+        setAssistantSettings({
+          name: d.settings.name,
+          firstMessage: d.settings.first_message ?? '',
+          systemPromptOverride: d.settings.system_prompt_override ?? '',
+          language: d.settings.language,
+          fallbackLanguage: d.settings.fallback_language ?? '',
+          speakingSpeed: d.settings.speaking_speed,
+          interruptionSensitivity: d.settings.interruption_sensitivity,
+          silenceTimeoutSeconds: d.settings.silence_timeout_seconds,
+          callTimeoutSeconds: d.settings.call_timeout_seconds,
+          voicemailBehavior: d.settings.voicemail_behavior,
+          recordCalls: d.settings.record_calls,
+          collectTranscripts: d.settings.collect_transcripts,
+          generateSummaries: d.settings.generate_summaries,
+          advancedModeEnabled: d.settings.advanced_mode_enabled
+        });
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, assistantSettingsLoaded]);
+
+  async function saveInstructions() {
+    setInstructionsSaving(true);
+    setInstructionsResult(null);
+    const res = await fetch('/api/phone/assistant-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(assistantSettings)
+    });
+    const data = await res.json();
+    setInstructionsSaving(false);
+    setInstructionsResult(
+      data.syncStatus === 'synced'
+        ? 'Saved — your AI will follow these instructions on the next call.'
+        : data.syncStatus === 'partial'
+        ? 'Saved, but one or more settings could not be confirmed on your AI employee yet.'
+        : 'Saved. This will apply once your phone number is fully connected.'
+    );
+  }
+
+  async function importWebsite() {
+    if (!websiteUrl.trim()) return;
+    setWebsiteImporting(true);
+    setWebsiteImportResult(null);
+    try {
+      const res = await fetch('/api/knowledge/import-website', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: websiteUrl.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setWebsiteImportResult({ ok: false, message: data.error ?? 'Could not import that website.' });
+        return;
+      }
+      setWebsiteImportResult({
+        ok: true,
+        message: `Read ${data.pagesFetched} page${data.pagesFetched === 1 ? '' : 's'} from your site and added it to your AI's knowledge base.`
+      });
+    } catch {
+      setWebsiteImportResult({ ok: false, message: 'Could not import that website.' });
+    } finally {
+      setWebsiteImporting(false);
+    }
+  }
+
+  async function handleKnowledgeFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !businessId) return;
+    setKbUploading(true);
+    setKbError(null);
+
+    const path = `${businessId}/${Date.now()}-${file.name}`;
+    const { error: uploadError } = await supabase.storage.from('knowledge-documents').upload(path, file);
+    if (uploadError) {
+      setKbError(uploadError.message);
+      setKbUploading(false);
+      return;
+    }
+
+    const { data: doc, error: insertError } = await supabase
+      .from('knowledge_documents')
+      .insert({ business_id: businessId, file_name: file.name, storage_path: path, doc_type: 'other', status: 'processing' })
+      .select()
+      .single();
+    if (insertError || !doc) {
+      setKbError(insertError?.message ?? 'Failed to save document record.');
+      setKbUploading(false);
+      return;
+    }
+
+    await fetch('/api/knowledge/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documentId: doc.id })
+    });
+
+    setKbUploadedNames((names) => [...names, file.name]);
+    setKbUploading(false);
+    e.target.value = '';
+  }
+
   async function skipKnowledgeForNow() {
     markComplete('knowledge');
   }
@@ -383,20 +524,81 @@ export default function OnboardingWizard() {
       )}
 
       {stage === 'knowledge' && (
-        <section className="card space-y-3">
-          <h2 className="font-display text-lg font-semibold">Teach your AI about your business</h2>
-          <p className="text-sm text-slate-600">
-            {form.business_type === 'restaurant'
-              ? 'Upload your menu now, or do it later from the Menu page — either way, nothing changes for your AI until you publish.'
-              : 'Upload documents, add FAQs, and set pricing now, or do it later from the Knowledge Base page.'}
-          </p>
-          <a href={form.business_type === 'restaurant' ? '/menu' : '/knowledge-base'} className="btn-secondary inline-block">
-            Go to {form.business_type === 'restaurant' ? 'Menu' : 'Knowledge Base'}
-          </a>
-          <div>
-            <button className="btn-primary" onClick={skipKnowledgeForNow}>Continue (I&apos;ll finish this later)</button>
-          </div>
-        </section>
+        <div className="space-y-4">
+          <section className="card space-y-3">
+            <h2 className="font-display text-lg font-semibold">How should your AI receptionist behave?</h2>
+            <p className="text-sm text-slate-600">
+              Tell it how to talk to customers, what to prioritize, or anything specific to how you run things —
+              this is added to the instructions it already follows, not a replacement for them.
+            </p>
+            <textarea
+              className="input font-mono text-xs"
+              rows={5}
+              placeholder='e.g. "Always mention our happy hour from 4-6pm. Be warm but brief — most callers are on their lunch break. Never quote a price for custom orders, always say a team member will follow up."'
+              value={assistantSettings.systemPromptOverride}
+              onChange={(e) => setAssistantSettings((s) => ({ ...s, systemPromptOverride: e.target.value }))}
+            />
+            <div className="flex items-center gap-2">
+              <button className="btn-secondary" onClick={saveInstructions} disabled={instructionsSaving}>
+                {instructionsSaving ? 'Saving…' : 'Save instructions'}
+              </button>
+              {instructionsResult && <span className="text-xs text-slate-600">{instructionsResult}</span>}
+            </div>
+          </section>
+
+          <section className="card space-y-3">
+            <h2 className="font-display text-lg font-semibold">Import from your website</h2>
+            <p className="text-sm text-slate-600">
+              Enter your site and your AI will read it (plus a few linked pages like About, Menu, or FAQ) to learn
+              how to answer customers.
+            </p>
+            <div className="flex gap-2">
+              <input
+                className="input"
+                placeholder="https://yourbusiness.com"
+                value={websiteUrl}
+                onChange={(e) => setWebsiteUrl(e.target.value)}
+              />
+              <button className="btn-secondary shrink-0" onClick={importWebsite} disabled={websiteImporting || !websiteUrl.trim()}>
+                {websiteImporting ? 'Reading site…' : 'Import from website'}
+              </button>
+            </div>
+            {websiteImportResult && (
+              <div className={websiteImportResult.ok ? 'text-sm text-success bg-green-50 rounded-lg px-3 py-2' : 'text-sm text-danger bg-red-50 rounded-lg px-3 py-2'}>
+                {websiteImportResult.message}
+              </div>
+            )}
+          </section>
+
+          <section className="card space-y-3">
+            <h2 className="font-display text-lg font-semibold">Teach your AI about your business</h2>
+            <p className="text-sm text-slate-600">
+              {form.business_type === 'restaurant'
+                ? 'Upload your menu now, or do it later from the Menu page — either way, nothing changes for your AI until you publish.'
+                : 'Upload documents, add FAQs, and set pricing now, or do it later from the Knowledge Base page.'}
+            </p>
+            <div>
+              <label className="btn-secondary inline-block cursor-pointer">
+                {kbUploading ? 'Uploading…' : 'Upload a document'}
+                <input type="file" className="hidden" onChange={handleKnowledgeFileUpload} disabled={kbUploading} />
+              </label>
+            </div>
+            {kbUploadedNames.length > 0 && (
+              <ul className="text-xs text-slate-600 list-disc list-inside">
+                {kbUploadedNames.map((n) => (
+                  <li key={n}>{n} uploaded</li>
+                ))}
+              </ul>
+            )}
+            {kbError && <div className="text-sm text-danger bg-red-50 rounded-lg px-3 py-2">{kbError}</div>}
+            <a href={form.business_type === 'restaurant' ? '/menu' : '/knowledge-base'} className="btn-secondary inline-block">
+              Go to {form.business_type === 'restaurant' ? 'Menu' : 'Knowledge Base'}
+            </a>
+            <div>
+              <button className="btn-primary" onClick={skipKnowledgeForNow}>Continue</button>
+            </div>
+          </section>
+        </div>
       )}
 
       {stage === 'calendar' && (
