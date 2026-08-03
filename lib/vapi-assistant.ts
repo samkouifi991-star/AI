@@ -308,9 +308,21 @@ export async function syncAssistantSettings(businessId: string): Promise<SyncRes
     .select('voice_provider, voice_id')
     .eq('business_id', businessId)
     .single();
+  const { data: routingRules } = await supabase
+    .from('call_routing_rules')
+    .select('transfer_on_customer_request, urgent_transfer_enabled, voicemail_fallback_enabled, quiet_hours_enabled, quiet_hours_start, quiet_hours_end')
+    .eq('business_id', businessId)
+    .maybeSingle();
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-  const basePrompt = buildSystemPrompt(business);
+  const basePrompt = buildSystemPrompt(business, {
+    transferOnCustomerRequest: routingRules?.transfer_on_customer_request,
+    urgentTransferEnabled: routingRules?.urgent_transfer_enabled,
+    voicemailFallbackEnabled: routingRules?.voicemail_fallback_enabled,
+    quietHoursEnabled: routingRules?.quiet_hours_enabled,
+    quietHoursStart: routingRules?.quiet_hours_start,
+    quietHoursEnd: routingRules?.quiet_hours_end
+  });
   const fullPrompt = settings?.system_prompt_override ? `${basePrompt}\n\n${settings.system_prompt_override}` : basePrompt;
 
   // First message is the one sentence Vapi actually speaks when answering.

@@ -1,5 +1,31 @@
 import { supabaseServer } from '@/lib/supabase/server';
 
+function tagFor(c: any, hasOrder: boolean, hasOpenGap: boolean) {
+  if (hasOpenGap) return { label: 'Check', tone: 'warn' as const };
+  if (hasOrder) return { label: 'Order placed', tone: 'good' as const };
+  if (c.status === 'transferred') return { label: 'Transferred', tone: 'warn' as const };
+  if (c.status === 'completed') return { label: 'Answered', tone: 'info' as const };
+  return { label: c.status, tone: 'mute' as const };
+}
+
+function tagStyle(tone: 'good' | 'warn' | 'info' | 'mute') {
+  const map = {
+    good: { bg: 'oklch(0.955 0.035 165)', fg: 'oklch(0.44 0.11 165)' },
+    warn: { bg: 'oklch(0.965 0.04 65)', fg: 'oklch(0.46 0.11 65)' },
+    info: { bg: 'oklch(0.96 0.02 265)', fg: 'oklch(0.47 0.13 265)' },
+    mute: { bg: 'oklch(0.955 0.004 265)', fg: 'oklch(0.52 0.01 265)' }
+  };
+  return map[tone];
+}
+
+function formatDuration(startedAt: string, endedAt: string | null) {
+  if (!endedAt) return '—';
+  const seconds = Math.max(0, Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000));
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 export default async function ConversationsPage() {
   const supabase = supabaseServer();
   const {
@@ -10,6 +36,11 @@ export default async function ConversationsPage() {
     .select('id')
     .eq('owner_user_id', user?.id)
     .single();
+
+  const { data: aiSettings } = business
+    ? await supabase.from('ai_employee_settings').select('employee_name').eq('business_id', business.id).maybeSingle()
+    : { data: null };
+  const aiName = aiSettings?.employee_name ?? 'Ava';
 
   const { data: calls } = business
     ? await supabase
@@ -30,111 +61,120 @@ export default async function ConversationsPage() {
         ])
       : [{ data: [] }, { data: [] }];
 
-  const ordersByCall = new Map<string, typeof orders>();
-  (orders ?? []).forEach((o) => {
+  const ordersByCall = new Map<string, any[]>();
+  (orders ?? []).forEach((o: any) => {
     if (!o.call_id) return;
-    ordersByCall.set(o.call_id, [...(ordersByCall.get(o.call_id) ?? []), o] as any);
+    ordersByCall.set(o.call_id, [...(ordersByCall.get(o.call_id) ?? []), o]);
   });
-  const gapsByCall = new Map<string, typeof gaps>();
-  (gaps ?? []).forEach((g) => {
+  const gapsByCall = new Map<string, any[]>();
+  (gaps ?? []).forEach((g: any) => {
     if (!g.call_id) return;
-    gapsByCall.set(g.call_id, [...(gapsByCall.get(g.call_id) ?? []), g] as any);
+    gapsByCall.set(g.call_id, [...(gapsByCall.get(g.call_id) ?? []), g]);
   });
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold mb-1">Conversations</h1>
-        <p className="text-slate-600 text-sm">
-          Every real call your AI has handled — transcript, any order it took, and any question it couldn&apos;t
-          answer. Practice calls never appear here.
-        </p>
+    <div style={{ maxWidth: 1080 }} className="font-instrument">
+      <div style={{ marginBottom: 26 }}>
+        <h1 className="font-grotesk text-bp-ink-strong" style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.02em' }}>Conversations</h1>
+        <p className="text-bp-ink-muted" style={{ fontSize: 14, marginTop: 4 }}>Every call {aiName} handled, and what came of it.</p>
       </div>
 
-      {(!calls || calls.length === 0) && <div className="card text-sm text-slate-600">No calls yet.</div>}
-
-      <div className="space-y-3">
-        {calls?.map((c) => {
-          const callOrders = ordersByCall.get(c.id) ?? [];
-          const callGaps = gapsByCall.get(c.id) ?? [];
-          return (
-            <details key={c.id} className="card">
-              <summary className="cursor-pointer flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-medium">{c.from_number ?? 'Unknown number'}</span>
-                  <span
-                    className={
-                      c.status === 'completed' ? 'badge-success' : c.status === 'transferred' ? 'badge-warning' : 'badge-danger'
-                    }
-                  >
-                    {c.status}
+      <div className="bg-bp-surface border border-bp-border" style={{ borderRadius: 14, boxShadow: '0 1px 2px oklch(0.21 0.012 265 / 0.04)' }}>
+        {(!calls || calls.length === 0) ? (
+          <div className="text-bp-ink-muted" style={{ padding: '20px', fontSize: 13.5 }}>
+            No calls yet. Once your number is connected, calls will show up here.
+          </div>
+        ) : (
+          calls.map((c, i) => {
+            const callOrders = ordersByCall.get(c.id) ?? [];
+            const callGaps = gapsByCall.get(c.id) ?? [];
+            const hasOpenGap = callGaps.some((g: any) => g.status === 'open');
+            const tag = tagFor(c, callOrders.length > 0, hasOpenGap);
+            const style = tagStyle(tag.tone);
+            return (
+              <details key={c.id} className={i > 0 ? 'border-t border-bp-border-faint' : ''}>
+                <summary
+                  style={{ padding: '15px 20px', display: 'flex', alignItems: 'center', gap: 16, cursor: 'pointer', listStyle: 'none' }}
+                  className="[&::-webkit-details-marker]:hidden"
+                >
+                  <div className="font-jetbrains text-bp-ink-faint" style={{ width: 74, flexShrink: 0, fontSize: 11 }}>
+                    {new Date(c.started_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="text-bp-ink-body" style={{ fontSize: 14, fontWeight: 500 }}>{c.from_number ?? 'Unknown caller'}</div>
+                    <div className="text-bp-ink-muted" style={{ fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {c.summary ?? 'No summary yet'}
+                    </div>
+                  </div>
+                  <div className="font-jetbrains text-bp-ink-faint" style={{ width: 46, textAlign: 'right', fontSize: 11, flexShrink: 0 }}>
+                    {formatDuration(c.started_at, c.ended_at)}
+                  </div>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, padding: '3px 9px', borderRadius: 20, whiteSpace: 'nowrap', background: style.bg, color: style.fg }}>
+                    {tag.label}
                   </span>
-                  {callOrders.length > 0 && <span className="badge-success">order placed</span>}
-                  {callGaps.some((g: any) => g.status === 'open') && <span className="badge-warning">unanswered question</span>}
-                </div>
-                <span className="text-xs text-slate-500">{new Date(c.started_at).toLocaleString()}</span>
-              </summary>
+                </summary>
 
-              <div className="mt-4 space-y-4 text-sm">
-                {c.summary && (
-                  <div>
-                    <div className="text-xs font-medium text-slate-500 mb-1">Summary</div>
-                    <p className="text-slate-700">{c.summary}</p>
-                  </div>
-                )}
-
-                <div>
-                  <div className="text-xs font-medium text-slate-500 mb-1">Transcript</div>
-                  <p className="text-slate-700 whitespace-pre-wrap">{c.transcript ?? 'Not available yet.'}</p>
-                  {c.translated_transcript && (
-                    <>
-                      <div className="text-xs font-medium text-slate-500 mt-2 mb-1">Translated (English)</div>
-                      <p className="text-slate-700 whitespace-pre-wrap">{c.translated_transcript}</p>
-                    </>
-                  )}
-                </div>
-
-                {c.recording_url && (
-                  <a href={c.recording_url} target="_blank" className="text-brand-600 font-medium" rel="noreferrer">
-                    Listen to recording
-                  </a>
-                )}
-
-                {callOrders.length > 0 && (
-                  <div>
-                    <div className="text-xs font-medium text-slate-500 mb-1">Order</div>
-                    {callOrders.map((o: any) => (
-                      <div key={o.id} className="flex items-center justify-between">
-                        <span>
-                          {o.order_type} — <span className="badge-success">{o.status}</span>
-                        </span>
-                        <span className="font-medium">${Number(o.total).toFixed(2)}</span>
+                <div className="border-t border-bp-border-faint" style={{ padding: '16px 20px 20px 110px' }}>
+                  <div className="text-bp-ink" style={{ display: 'flex', flexDirection: 'column', gap: 14, fontSize: 13 }}>
+                    {c.summary && (
+                      <div>
+                        <div className="font-jetbrains text-bp-ink-faint" style={{ fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Summary</div>
+                        <p>{c.summary}</p>
                       </div>
-                    ))}
-                    <a href="/orders" className="text-brand-600 font-medium text-xs">
-                      View in Orders →
-                    </a>
-                  </div>
-                )}
+                    )}
 
-                {callGaps.length > 0 && (
-                  <div>
-                    <div className="text-xs font-medium text-slate-500 mb-1">Knowledge gaps raised on this call</div>
-                    {callGaps.map((g: any) => (
-                      <div key={g.id} className="flex items-center justify-between">
-                        <span>{g.question}</span>
-                        <span className={g.status === 'open' ? 'badge-warning' : 'badge-success'}>{g.status}</span>
+                    <div>
+                      <div className="font-jetbrains text-bp-ink-faint" style={{ fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Transcript</div>
+                      <p style={{ whiteSpace: 'pre-wrap' }}>{c.transcript ?? 'Not available yet.'}</p>
+                      {c.translated_transcript && (
+                        <>
+                          <div className="font-jetbrains text-bp-ink-faint" style={{ fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 10, marginBottom: 4 }}>
+                            Translated (English)
+                          </div>
+                          <p style={{ whiteSpace: 'pre-wrap' }}>{c.translated_transcript}</p>
+                        </>
+                      )}
+                    </div>
+
+                    {c.recording_url && (
+                      <a href={c.recording_url} target="_blank" rel="noreferrer" className="text-bp-accent" style={{ fontWeight: 500 }}>
+                        Listen to recording
+                      </a>
+                    )}
+
+                    {callOrders.length > 0 && (
+                      <div>
+                        <div className="font-jetbrains text-bp-ink-faint" style={{ fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Order</div>
+                        {callOrders.map((o: any) => (
+                          <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span>{o.order_type} — {o.status.replace(/_/g, ' ')}</span>
+                            <span style={{ fontWeight: 500 }}>${Number(o.total).toFixed(2)}</span>
+                          </div>
+                        ))}
+                        <a href="/orders" className="text-bp-accent" style={{ fontSize: 12, fontWeight: 500 }}>View in Orders →</a>
                       </div>
-                    ))}
-                    <a href="/teach" className="text-brand-600 font-medium text-xs">
-                      Resolve in Teach Ava →
-                    </a>
+                    )}
+
+                    {callGaps.length > 0 && (
+                      <div>
+                        <div className="font-jetbrains text-bp-ink-faint" style={{ fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
+                          Questions {aiName} raised on this call
+                        </div>
+                        {callGaps.map((g: any) => (
+                          <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span>&ldquo;{g.question}&rdquo;</span>
+                            <span className="text-bp-ink-muted">{g.status}</span>
+                          </div>
+                        ))}
+                        <a href="/teach" className="text-bp-accent" style={{ fontSize: 12, fontWeight: 500 }}>Resolve in Teach {aiName} →</a>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </details>
-          );
-        })}
+                </div>
+              </details>
+            );
+          })
+        )}
       </div>
     </div>
   );
