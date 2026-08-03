@@ -22,6 +22,8 @@ type RecordGapParams = {
   callId?: string | null;
   source?: 'live' | 'practice';
   practiceSessionId?: string | null;
+  reason?: 'no_match' | 'low_confidence' | 'transfer_requested';
+  confidenceScore?: number | null;
 };
 
 /**
@@ -48,7 +50,9 @@ export async function recordKnowledgeGap(
       source: params.source ?? 'live',
       question: safeQuestion,
       redacted,
-      status: 'open'
+      status: 'open',
+      reason: params.reason ?? 'no_match',
+      confidence_score: params.confidenceScore ?? null
     })
     .select('id')
     .single();

@@ -5,6 +5,7 @@ import { getFreeBusy, createCalendarEvent } from './calendar';
 import { sendSms, appointmentConfirmationSms } from './twilio';
 import { detectLanguage, translateText, SUPPORTED_LANGUAGES } from './language';
 import { computeOrderTotals, createOrderPaymentLink, releaseExpiredHolds, lineTotal, OrderItemInput } from './orders';
+import { recordKnowledgeGap, isHumanHandoffRequest } from './knowledge-gaps';
 
 /**
  * The single implementation of every tool Ava can call, shared between a
@@ -294,6 +295,22 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
       }
 
       const employeeSettings = await getAiEmployeeSettings(supabase, businessId);
+
+      // Log as a knowledge gap only when this is a real "I was missing
+      // information" escalation, not a plain "let me speak to a person"
+      // request (the latter is filtered out by isHumanHandoffRequest,
+      // exactly as it already is in lib/rag.ts's gap logging).
+      if (params.reason && !isHumanHandoffRequest(params.reason)) {
+        await recordKnowledgeGap({
+          businessId,
+          question: params.reason,
+          callId: ctx.callId,
+          source: ctx.mode,
+          practiceSessionId: ctx.practiceSessionId,
+          reason: 'transfer_requested'
+        });
+      }
+
       return {
         result: 'transferring',
         transferTo: employeeSettings.escalation_phone_number || process.env.TWILIO_PHONE_NUMBER

@@ -23,3 +23,10 @@
   .badge-danger { @apply bg-red-50 text-danger text-xs font-medium px-2 py-1 rounded-full; }
   .badge-slate { @apply bg-slate-100 text-slate-600 text-xs font-medium px-2 py-1 rounded-full; }
 }
+
+/* Dashboard redesign keyframes (design_handoff_dashboard_redesign).
+   Namespaced "bp-" — safe to load globally, nothing else uses these names. */
+@keyframes bp-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.82); } }
+@keyframes bp-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes bp-ring { 0% { transform: scale(1); opacity: 0.5; } 100% { transform: scale(2.4); opacity: 0; } }
+@keyframes bp-bar { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }

@@ -1,37 +1,55 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase/server';
-import SignOutButton from './SignOutButton';
+import DashboardSidebar from './DashboardSidebar';
+import { grotesk, instrument, jetbrains } from '@/lib/fonts';
 
-const SERVICE_NAV = [
-  { href: '/onboarding', label: 'Set up Business Pilot AI' },
-  { href: '/dashboard', label: 'Dashboard' },
+type NavItem = { href: string; label: string; external?: boolean };
+
+const RESTAURANT_PRIMARY: NavItem[] = [
+  { href: '/dashboard', label: 'Today' },
   { href: '/conversations', label: 'Conversations' },
-  { href: '/leads', label: 'Leads' },
-  { href: '/appointments', label: 'Appointments' },
-  { href: '/train-ai', label: 'Train My AI' },
-  { href: '/knowledge-base', label: 'Knowledge Base' },
-  { href: '/teach', label: 'Teach Ava' },
+  { href: '/orders', label: 'Orders' },
+  { href: '/teach', label: 'Teach {ai}' },
   { href: '/practice', label: 'Practice' },
-  { href: '/phone-settings', label: 'Phone Settings' },
-  { href: '/calendar', label: 'Calendar' },
-  { href: '/settings/voice-language', label: 'Voice & Language' },
-  { href: '/phone', label: 'Phone Management' }
+  { href: '/phone', label: 'Your phone' },
+  { href: '/', label: 'Public website', external: true }
 ];
 
-const RESTAURANT_NAV = [
-  { href: '/onboarding', label: 'Set up Business Pilot AI' },
-  { href: '/dashboard', label: 'Dashboard' },
+const SERVICE_PRIMARY: NavItem[] = [
+  { href: '/dashboard', label: 'Today' },
   { href: '/conversations', label: 'Conversations' },
-  { href: '/menu', label: 'Menu' },
-  { href: '/orders', label: 'Orders' },
-  { href: '/restaurant-settings', label: 'Restaurant Settings' },
-  { href: '/knowledge-base', label: 'Knowledge Base' },
-  { href: '/teach', label: 'Teach Ava' },
+  { href: '/appointments', label: 'Bookings' },
+  { href: '/teach', label: 'Teach {ai}' },
   { href: '/practice', label: 'Practice' },
-  { href: '/phone-settings', label: 'Phone Settings' },
-  { href: '/settings/voice-language', label: 'Voice & Language' },
-  { href: '/phone', label: 'Phone Management' }
+  { href: '/phone', label: 'Your phone' },
+  { href: '/', label: 'Public website', external: true }
+];
+
+// design_handoff_dashboard_redesign's nav is deliberately six-ish items —
+// it does not delete the app's other dashboard routes, it stops listing
+// them up top. They stay reachable here, under "More", rather than being
+// silently dropped (per the handoff README's explicit instruction).
+// /phone-settings is the one exception: it predates /phone and was already
+// established as dead/superseded code earlier in this project, not a live
+// route worth preserving.
+const RESTAURANT_LEGACY: NavItem[] = [
+  { href: '/menu', label: 'Menu' },
+  { href: '/leads', label: 'Leads' },
+  { href: '/appointments', label: 'Appointments' },
+  { href: '/restaurant-settings', label: 'Restaurant settings' },
+  { href: '/knowledge-base', label: 'Knowledge base' },
+  { href: '/train-ai', label: 'Train my AI' },
+  { href: '/settings/voice-language', label: 'Voice & language' },
+  { href: '/account', label: 'Account settings' }
+];
+
+const SERVICE_LEGACY: NavItem[] = [
+  { href: '/leads', label: 'Leads' },
+  { href: '/calendar', label: 'Calendar' },
+  { href: '/knowledge-base', label: 'Knowledge base' },
+  { href: '/train-ai', label: 'Train my AI' },
+  { href: '/settings/voice-language', label: 'Voice & language' },
+  { href: '/account', label: 'Account settings' }
 ];
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -44,41 +62,65 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const { data: business } = await supabase
     .from('businesses')
-    .select('business_type')
+    .select('id, business_type, is_live')
     .eq('owner_user_id', user.id)
     .single();
 
-  const NAV = business?.business_type === 'restaurant' ? RESTAURANT_NAV : SERVICE_NAV;
+  const isRestaurant = business?.business_type === 'restaurant';
+  const primaryNav = (isRestaurant ? RESTAURANT_PRIMARY : SERVICE_PRIMARY).map((item) =>
+    item.href === '/teach' ? { ...item } : item
+  );
+  const legacyNav = isRestaurant ? RESTAURANT_LEGACY : SERVICE_LEGACY;
+
+  let aiName = 'Ava';
+  let dutyLine = 'No calls yet today';
+  let openGapCount = 0;
+
+  if (business) {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const [{ data: employeeSettings }, { count: callsToday }, { count: secondaryToday }, { count: gapCount }] = await Promise.all([
+      supabase.from('ai_employee_settings').select('employee_name').eq('business_id', business.id).maybeSingle(),
+      supabase.from('calls').select('id', { count: 'exact', head: true }).eq('business_id', business.id).gte('started_at', startOfToday.toISOString()),
+      isRestaurant
+        ? supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', business.id).gte('created_at', startOfToday.toISOString())
+        : supabase.from('appointments').select('id', { count: 'exact', head: true }).eq('business_id', business.id).gte('created_at', startOfToday.toISOString()),
+      supabase.from('knowledge_gaps').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'open')
+    ]);
+
+    aiName = employeeSettings?.employee_name ?? 'Ava';
+    openGapCount = gapCount ?? 0;
+
+    const calls = callsToday ?? 0;
+    const secondary = secondaryToday ?? 0;
+    const secondaryLabel = isRestaurant ? 'orders' : 'bookings';
+    dutyLine = calls === 0 && secondary === 0 ? 'No activity yet today' : `${calls} call${calls === 1 ? '' : 's'} · ${secondary} ${secondaryLabel} today`;
+  }
+
+  const primaryNavRendered = primaryNav.map((item) => ({ ...item, label: item.label.replace('{ai}', aiName) }));
+
+  const ownerLabel = user.email ?? 'Account';
+  const ownerInitial = (user.email ?? 'A').charAt(0).toUpperCase();
+  const aiInitial = aiName.charAt(0).toUpperCase();
 
   return (
-    <div className="min-h-screen flex">
-      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0">
-        <div className="px-6 py-5 border-b border-slate-200">
-          <span className="font-display font-semibold text-lg">Business Pilot AI</span>
-        </div>
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-ink"
-            >
-              {item.label}
-            </Link>
-          ))}
-          <Link
-            href="/account"
-            className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-ink"
-          >
-            Account Settings
-          </Link>
-        </nav>
-        <div className="px-3 py-4 border-t border-slate-200 space-y-2">
-          <span className="block px-3 py-1 text-xs text-slate-600 truncate">{user.email}</span>
-          <SignOutButton className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-danger" />
-        </div>
-      </aside>
-      <main className="flex-1 p-8">{children}</main>
+    <div className={`${grotesk.variable} ${instrument.variable} ${jetbrains.variable} bg-bp-bg`} style={{ minHeight: '100vh', display: 'flex' }}>
+      <DashboardSidebar
+        aiName={aiName}
+        aiInitial={aiInitial}
+        isOnDuty={!!business?.is_live}
+        dutyLine={dutyLine}
+        primaryNav={primaryNavRendered}
+        teachHref="/teach"
+        openGapCount={openGapCount}
+        legacyNav={legacyNav}
+        ownerLabel={ownerLabel}
+        ownerInitial={ownerInitial}
+      />
+      <main className="font-instrument text-bp-ink" style={{ flex: 1, minWidth: 0, padding: '34px 40px 60px' }}>
+        {children}
+      </main>
     </div>
   );
 }

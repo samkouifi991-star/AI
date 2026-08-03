@@ -36,7 +36,9 @@ export async function retrieveAndAnswer(businessId: string, question: string, op
 
   if (error) throw new Error(`RAG lookup failed: ${error.message}`);
 
-  const chunks = (data ?? []).map((row: { content: string }) => row.content);
+  const rows = (data ?? []) as { content: string; similarity: number }[];
+  const chunks = rows.map((row) => row.content);
+  const topSimilarity = rows[0]?.similarity ?? null;
 
   if (chunks.length === 0) {
     await recordKnowledgeGap({
@@ -44,7 +46,8 @@ export async function retrieveAndAnswer(businessId: string, question: string, op
       question,
       callId: opts.callId,
       source: opts.source,
-      practiceSessionId: opts.practiceSessionId
+      practiceSessionId: opts.practiceSessionId,
+      reason: 'no_match'
     });
     return { answer: NO_KNOWLEDGE_FALLBACK, sources: [] as string[], confident: false };
   }
@@ -57,7 +60,9 @@ export async function retrieveAndAnswer(businessId: string, question: string, op
       question,
       callId: opts.callId,
       source: opts.source,
-      practiceSessionId: opts.practiceSessionId
+      practiceSessionId: opts.practiceSessionId,
+      reason: 'low_confidence',
+      confidenceScore: topSimilarity
     });
   }
 
