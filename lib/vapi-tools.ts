@@ -204,12 +204,20 @@ export interface RoutingPromptRules {
  * voicemail) so callers of buildSystemPrompt that don't yet have routing
  * rules loaded (e.g. at first assistant creation) see unchanged behavior.
  */
+const TONE_CLAUSES: Record<string, string> = {
+  friendly: 'warm and friendly',
+  professional: 'polished and professional',
+  concise: 'brief and to the point — do not over-explain'
+};
+
 export function buildSystemPrompt(
   business: { name: string; business_type?: string | null; service_area?: string | null },
-  routing?: RoutingPromptRules
+  routing?: RoutingPromptRules,
+  tone?: string | null
 ): string {
   const isRestaurant = business.business_type === 'restaurant';
   const areaClause = business.service_area ? ` serving ${business.service_area}` : '';
+  const toneClause = TONE_CLAUSES[tone ?? 'friendly'] ?? TONE_CLAUSES.friendly;
 
   const transferOnRequest = routing?.transferOnCustomerRequest ?? true;
   const urgentTransfer = routing?.urgentTransferEnabled ?? true;
@@ -231,7 +239,7 @@ export function buildSystemPrompt(
       ? ` During quiet hours (between ${routing.quietHoursStart} and ${routing.quietHoursEnd}), handle every call yourself — the owner will not be rung or notified in real time regardless of the rules above.`
       : '';
 
-  const shared = `You are the virtual receptionist for ${business.name}, a ${isRestaurant ? 'restaurant' : 'business'}${areaClause}. Your job: (1) understand why the customer is calling, (2) answer questions using ONLY the get_business_knowledge tool — never guess prices or policies, (6) call save_lead as soon as you have enough info, even if they don't book, (7) ${transferClause} or for anything outside what you can help with.${voicemailClause}${quietHoursClause} LANGUAGE: if auto-detect is enabled for this business, call detect_language early in the call and whenever the caller's language seems to have changed. If detect_language returns confirm_required, ask the caller the provided message_to_customer and wait for their answer, then call switch_language with confirmed true or false based on their response — never switch language without asking first when confirmation is required. Always speak your replies, including get_business_knowledge answers, in the call's current active language.`;
+  const shared = `You are the virtual receptionist for ${business.name}, a ${isRestaurant ? 'restaurant' : 'business'}${areaClause}. Speak in a ${toneClause} tone throughout the call. Your job: (1) understand why the customer is calling, (2) answer questions using ONLY the get_business_knowledge tool — never guess prices or policies, (6) call save_lead as soon as you have enough info, even if they don't book, (7) ${transferClause} or for anything outside what you can help with.${voicemailClause}${quietHoursClause} LANGUAGE: if auto-detect is enabled for this business, call detect_language early in the call and whenever the caller's language seems to have changed. If detect_language returns confirm_required, ask the caller the provided message_to_customer and wait for their answer, then call switch_language with confirmed true or false based on their response — never switch language without asking first when confirmation is required. Always speak your replies, including get_business_knowledge answers, in the call's current active language.`;
 
   const restaurantFlow = ` RESTAURANT ORDERING: ask pickup or delivery early, then use find_menu_item before adding anything so you know real prices/sizes/modifiers — never invent a menu item or price. Ask about sizes, toppings, and add-ons when the item has them. If an item isn't found or is sold out, say so honestly — never claim it's available. If a required modifier is missing, ask for it before adding the item. Use add_order_item for each item and remove_order_item if the customer changes their mind, or if they change quantity, remove and re-add with the new quantity. When they're done ordering, call get_order_summary and read the full breakdown back to them — stating the correct total — then ask if they'd like to change anything — keep looping add/remove until they confirm. Only then call confirm_order, which texts the payment link; tell them the order goes to the kitchen once payment completes, unless the restaurant allows pay-at-pickup/delivery, in which case say the order is placed and payment is due then instead. Never say an order was placed unless confirm_order actually succeeded.`;
 

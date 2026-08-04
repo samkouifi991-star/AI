@@ -17,6 +17,11 @@ export async function GET() {
   if (!business) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { data: settings } = await supabase.from('assistant_settings').select('*').eq('business_id', business.id).single();
+  const { data: employeeSettings } = await supabase
+    .from('ai_employee_settings')
+    .select('tone, escalation_phone_number')
+    .eq('business_id', business.id)
+    .maybeSingle();
   const { data: lastSync } = await supabase
     .from('assistant_sync_status')
     .select('status, vapi_assistant_id, requested_at, completed_at, error_message')
@@ -25,7 +30,7 @@ export async function GET() {
     .limit(1)
     .maybeSingle();
 
-  return NextResponse.json({ settings: settings ?? null, lastSync: lastSync ?? null });
+  return NextResponse.json({ settings: settings ?? null, tone: employeeSettings?.tone ?? 'friendly', lastSync: lastSync ?? null });
 }
 
 export async function POST(req: NextRequest) {
@@ -58,6 +63,10 @@ export async function POST(req: NextRequest) {
     { onConflict: 'business_id' }
   );
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  if (body.tone) {
+    await supabase.from('ai_employee_settings').upsert({ business_id: business.id, tone: body.tone, updated_at: new Date().toISOString() }, { onConflict: 'business_id' });
+  }
 
   // Always attempt a sync — syncAssistantSettings resolves the real
   // assistant via the phone number's live Vapi mapping, not just

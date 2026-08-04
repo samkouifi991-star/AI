@@ -128,35 +128,49 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Could not read any text from that site.' }, { status: 502 });
   }
 
-  const { data: doc, error: docError } = await supabase
-    .from('knowledge_documents')
-    .insert({
-      business_id: business.id,
-      file_name: parsedUrl.hostname,
-      storage_path: normalizedUrl,
-      doc_type: 'website',
-      status: 'processing'
-    })
-    .select()
-    .single();
-  if (docError || !doc) return NextResponse.json({ error: docError?.message ?? 'Could not save the import record.' }, { status: 500 });
+  // Re-importing reuses the same document row (one per business, doc_type
+  // 'website') instead of stacking a new one on every refresh — old
+  // chunks are replaced, never left to accumulate alongside fresh ones.
+  let { data: doc } = await supabase.from('knowledge_documents').select('id').eq('business_id', business.id).eq('doc_type', 'website').maybeSingle();
+
+  if (doc) {
+    await supabase
+      .from('knowledge_documents')
+      .update({ file_name: parsedUrl.hostname, storage_path: normalizedUrl, status: 'processing', error_message: null, created_at: new Date().toISOString() })
+      .eq('id', doc.id);
+    await supabase.from('knowledge_chunks').delete().eq('document_id', doc.id);
+  } else {
+    const { data: created, error: docError } = await supabase
+      .from('knowledge_documents')
+      .insert({
+        business_id: business.id,
+        file_name: parsedUrl.hostname,
+        storage_path: normalizedUrl,
+        doc_type: 'website',
+        status: 'processing'
+      })
+      .select('id')
+      .single();
+    if (docError || !created) return NextResponse.json({ error: docError?.message ?? 'Could not save the import record.' }, { status: 500 });
+    doc = created;
+  }
 
   try {
     const chunks = chunkText(combinedText);
     const embeddings = await embedBatch(chunks);
     const rows = chunks.map((content, i) => ({
       business_id: business.id,
-      document_id: doc.id,
+      document_id: doc!.id,
       content,
       embedding: embeddings[i]
     }));
     const { error: insertError } = await supabase.from('knowledge_chunks').insert(rows);
     if (insertError) throw new Error(insertError.message);
 
-    await supabase.from('knowledge_documents').update({ status: 'ready' }).eq('id', doc.id);
+    await supabase.from('knowledge_documents').update({ status: 'ready', pages_imported: sections.length }).eq('id', doc.id);
     return NextResponse.json({ ok: true, pagesFetched: sections.length, chunkCount: rows.length, documentId: doc.id });
   } catch (err: any) {
-    await supabase.from('knowledge_documents').update({ status: 'failed' }).eq('id', doc.id);
+    await supabase.from('knowledge_documents').update({ status: 'failed', error_message: err.message ?? 'Could not process the site into your knowledge base.' }).eq('id', doc.id);
     logger.error('website_import_ingest_failed', { businessId: business.id, message: err.message });
     return NextResponse.json({ error: 'Read the site but could not process it into your knowledge base.' }, { status: 500 });
   }
