@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { getPricingForApplicationType, effectiveServiceFeeCents, formatCents } from '@/lib/engine/pricing'
 import { startApplication } from '@/app/actions/applications'
+import type { AssociatedForm, Faq } from '@/lib/supabase/types'
 
 export async function generateMetadata({ params }: { params: { slug: string } }) {
   const supabase = createClient()
@@ -31,24 +32,22 @@ export default async function ApplicationPackagePage({ params }: { params: { slu
   const serviceFee = effectiveServiceFeeCents(pricing)
   const totalGovernmentFee = governmentFees.reduce((sum, f) => sum + f.amount_cents, 0)
 
-  const faqs = [
+  const fallbackFaqs = [
     {
-      q: 'Do I need a lawyer to use Smart USA Visa?',
-      a: 'No. Smart USA Visa is a self-service document preparation platform, not a law firm. If your situation is complex, we will flag it and suggest speaking with a qualified immigration attorney, but most straightforward cases can be prepared entirely through our guided questionnaire.',
+      question: 'Do I need a lawyer to use Smart USA Visa?',
+      answer: 'No. Smart USA Visa is a self-service document preparation platform, not a law firm. If your situation is complex, we will flag it and suggest speaking with a qualified immigration attorney, but most straightforward cases can be prepared entirely through our guided questionnaire.',
     },
     {
-      q: 'How long does the process take?',
-      a: `Completing the ${applicationType.form_code} questionnaire typically takes 30–60 minutes, though you can save and resume anytime. USCIS processing times after filing vary and are outside our control — check the USCIS processing time tool for current estimates.`,
+      question: 'What if I make a mistake on my answers?',
+      answer: 'You can go back and edit any answer before you finish. Our smart validation checks for missing information, impossible date sequences, and other common issues before you file.',
     },
     {
-      q: 'What if I make a mistake on my answers?',
-      a: 'You can go back and edit any answer before you finish. Our smart validation checks for missing information, impossible date sequences, and other common issues before you file.',
-    },
-    {
-      q: 'Is my information secure?',
-      a: 'Yes. Your data is encrypted in transit and at rest, documents are stored in private storage with signed, time-limited access links, and access is protected by row-level security so only you (and authorized support staff) can see your application.',
+      question: 'Is my information secure?',
+      answer: 'Yes. Your data is encrypted in transit and at rest, documents are stored in private storage with signed, time-limited access links, and access is protected by row-level security so only you (and authorized support staff) can see your application.',
     },
   ]
+  const faqs = applicationType.faqs && applicationType.faqs.length > 0 ? applicationType.faqs : fallbackFaqs
+  const ctaText = applicationType.cta_text || 'Start Application'
 
   return (
     <div className="container-page py-14">
@@ -108,6 +107,42 @@ export default async function ApplicationPackagePage({ params }: { params: { slu
             </section>
           )}
 
+          {applicationType.associated_forms && applicationType.associated_forms.length > 0 && (
+            <section className="mt-10">
+              <h2 className="text-xl font-bold">Associated forms</h2>
+              <p className="mt-2 text-sm text-ink-500">Depending on your situation, these are commonly prepared alongside this application.</p>
+              <ul className="mt-4 space-y-2">
+                {applicationType.associated_forms.map((f: AssociatedForm) => (
+                  <li key={f.form_code} className="flex items-start gap-2 text-sm text-ink-700">
+                    <span className="mt-0.5 text-harbor-600">•</span>
+                    <span><strong>{f.form_code}</strong> — {f.label}{f.note ? `. ${f.note}` : ''}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          <section className="mt-10">
+            <h2 className="text-xl font-bold">Before you start</h2>
+            <ul className="mt-4 space-y-2 text-sm text-ink-700">
+              <li className="flex items-start gap-2"><span className="mt-0.5 text-harbor-600">•</span>About 30–60 minutes of uninterrupted time, though you can save and resume anytime.</li>
+              <li className="flex items-start gap-2"><span className="mt-0.5 text-harbor-600">•</span>Your basic biographical information and current immigration documents (green card, prior USCIS notices, passport).</li>
+              <li className="flex items-start gap-2"><span className="mt-0.5 text-harbor-600">•</span>A way to upload photos or scans of supporting documents from your phone or computer.</li>
+            </ul>
+          </section>
+
+          <section className="mt-10">
+            <h2 className="text-xl font-bold">How it works</h2>
+            <ol className="mt-4 space-y-3">
+              {['Answer questions', 'Upload documents', 'Review application', 'Prepare filing package'].map((step, i) => (
+                <li key={step} className="flex items-start gap-3 text-sm text-ink-700">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-harbor-900 text-xs font-bold text-white">{i + 1}</span>
+                  {step}
+                </li>
+              ))}
+            </ol>
+          </section>
+
           <section className="mt-10">
             <h2 className="text-xl font-bold">Expected workflow</h2>
             <p className="mt-3 text-ink-700">{applicationType.workflow_overview}</p>
@@ -116,10 +151,10 @@ export default async function ApplicationPackagePage({ params }: { params: { slu
           <section className="mt-10">
             <h2 className="text-xl font-bold">Frequently asked questions</h2>
             <div className="mt-4 space-y-4">
-              {faqs.map((faq) => (
-                <div key={faq.q} className="card">
-                  <h3 className="font-heading font-semibold">{faq.q}</h3>
-                  <p className="mt-2 text-sm text-ink-600">{faq.a}</p>
+              {faqs.map((faq: Faq) => (
+                <div key={faq.question} className="card">
+                  <h3 className="font-heading font-semibold">{faq.question}</h3>
+                  <p className="mt-2 text-sm text-ink-600">{faq.answer}</p>
                 </div>
               ))}
             </div>
@@ -156,11 +191,12 @@ export default async function ApplicationPackagePage({ params }: { params: { slu
             <form action={startApplication} className="mt-6">
               <input type="hidden" name="slug" value={applicationType.slug} />
               <button type="submit" className="btn-primary w-full text-base">
-                Start Application
+                {ctaText}
               </button>
             </form>
             <p className="mt-3 text-center text-xs text-ink-500">
               Start for free — no payment until you're ready to prepare your filing package.
+              {applicationType.estimated_minutes ? ` Takes about ${applicationType.estimated_minutes} minutes.` : ''}
             </p>
           </div>
         </div>

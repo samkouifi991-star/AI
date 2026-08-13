@@ -43,6 +43,29 @@ export default async function AdminTemplateDetailPage({ params }: { params: { sl
             <label className="field-label">Workflow overview</label>
             <textarea name="workflow_overview" defaultValue={applicationType.workflow_overview} rows={2} className="field-input" disabled={!canEdit} />
           </div>
+          <div>
+            <label className="field-label">Goal categories (comma-separated)</label>
+            <input name="goal_categories" defaultValue={(applicationType.goal_categories ?? []).join(', ')} className="field-input" disabled={!canEdit} />
+            <p className="field-help">Controls which /applications?goal= filters this shows under. An application can belong to more than one, e.g. &quot;family, fiance&quot;.</p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="field-label">CTA button text</label>
+              <input name="cta_text" defaultValue={applicationType.cta_text ?? ''} placeholder={`Start My ${applicationType.form_code}`} className="field-input" disabled={!canEdit} />
+            </div>
+            <div>
+              <label className="field-label">Estimated minutes</label>
+              <input type="number" name="estimated_minutes" defaultValue={applicationType.estimated_minutes ?? ''} className="field-input" disabled={!canEdit} />
+            </div>
+          </div>
+          <div>
+            <label className="field-label">FAQs (JSON array of {'{'}question, answer{'}'})</label>
+            <textarea name="faqs" defaultValue={JSON.stringify(applicationType.faqs ?? [], null, 2)} rows={6} className="field-input font-mono text-xs" disabled={!canEdit} />
+          </div>
+          <div>
+            <label className="field-label">Associated forms (JSON array of {'{'}form_code, label, note{'}'})</label>
+            <textarea name="associated_forms" defaultValue={JSON.stringify(applicationType.associated_forms ?? [], null, 2)} rows={4} className="field-input font-mono text-xs" disabled={!canEdit} />
+          </div>
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" name="is_active" defaultChecked={applicationType.is_active} disabled={!canEdit} />

@@ -2,13 +2,25 @@ import type { ApplicationTypeSeed } from '../types'
 import { nameQuestions, otherNamesQuestions, contactQuestions, maritalQuestions } from '../shared-questions'
 
 export const i90: ApplicationTypeSeed = {
-  slug: 'green-card-renewal-replacement',
+  slug: 'renew-replace-green-card',
   form_code: 'I-90',
-  name: 'Renew or Replace My Green Card',
+  name: 'Renew or Replace Your Green Card',
   short_name: 'Green Card Renewal/Replacement',
   goal_categories: ['green-card'],
   edition_date: '2024-02-01',
   sort_order: 50,
+  cta_text: 'Start My I-90',
+  estimated_minutes: 15,
+  faqs: [
+    {
+      question: 'Can I travel while my I-90 is pending?',
+      answer: 'A filing receipt combined with your expired card can serve as temporary evidence of status for some travel — check current USCIS guidance for your situation before booking international travel.',
+    },
+    {
+      question: 'What if my legal name changed since my card was issued?',
+      answer: 'A name change is a valid reason to file — we ask about this during eligibility screening and will note it in your checklist so you can include supporting documentation (like a marriage certificate or court order).',
+    },
+  ],
   summary: 'Renew an expiring green card or replace one that was lost, stolen, damaged, or issued with incorrect information.',
   who_its_for: 'Current permanent residents whose card is expiring, expired, lost, stolen, damaged, or contains an error.',
   eligibility_overview: 'Most permanent residents with a valid basis (expiration, loss, damage, or a card error) are eligible to file.',
@@ -30,6 +42,7 @@ export const i90: ApplicationTypeSeed = {
             { value: 'damaged', label: 'My card was damaged' },
             { value: 'error', label: 'My card has incorrect information' },
             { value: 'never_received', label: 'I never received my card' },
+            { value: 'name_changed', label: 'My legal name has changed' },
           ],
         },
       ],
@@ -40,6 +53,7 @@ export const i90: ApplicationTypeSeed = {
   documentRequirements: [
     { key: 'current_green_card', label: 'Copy of current green card (front and back)', category: 'immigration', show_if: [{ question_key: 'i90_reason', operator: 'not_equals', value: 'lost_stolen' }] },
     { key: 'police_report', label: 'Police report (if stolen)', category: 'other', show_if: [{ question_key: 'i90_reason', operator: 'equals', value: 'lost_stolen' }] },
+    { key: 'name_change_evidence', label: 'Legal name change document (marriage certificate or court order)', category: 'other', show_if: [{ question_key: 'i90_reason', operator: 'equals', value: 'name_changed' }] },
     { key: 'two_photos', label: 'Two passport-style photos', category: 'identity', required: true },
   ],
   pricing: { service_fee_cents: 12900, print_mail_fee_cents: 1995 },
@@ -49,11 +63,23 @@ export const i90: ApplicationTypeSeed = {
 export const i751: ApplicationTypeSeed = {
   slug: 'remove-conditions-green-card',
   form_code: 'I-751',
-  name: 'Remove Conditions From My Green Card',
+  name: 'Remove Conditions From Your Green Card',
   short_name: 'Remove Conditions on Residence',
   goal_categories: ['green-card'],
   edition_date: '2023-09-01',
   sort_order: 60,
+  cta_text: 'Start My I-751',
+  estimated_minutes: 35,
+  faqs: [
+    {
+      question: 'What if I’m no longer married to my sponsoring spouse?',
+      answer: 'You can still file, but generally need to request a waiver of the joint filing requirement — for example based on divorce, your spouse’s death, or abuse. We ask which situation applies and tailor your checklist accordingly. This is not a legal determination of which waiver you qualify for.',
+    },
+    {
+      question: 'What counts as evidence the marriage was genuine?',
+      answer: 'Commonly: joint bank or lease records, joint tax returns, insurance policies listing both spouses, and photos together over time. Your personalized checklist lists what to gather.',
+    },
+  ],
   summary: 'Petition to remove the 2-year conditions on your green card, usually filed jointly with your spouse.',
   who_its_for: 'Conditional permanent residents who obtained status through marriage less than 2 years old at approval.',
   eligibility_overview: 'You generally must file within the 90 days before your 2-year card expires, jointly with your spouse (with exceptions for divorce, abuse, or widowhood).',
@@ -73,8 +99,9 @@ export const i751: ApplicationTypeSeed = {
           options: [
             { value: 'joint', label: 'Jointly with my spouse' },
             { value: 'divorced_waiver', label: 'Requesting a waiver — marriage ended in divorce' },
-            { value: 'abuse_waiver', label: 'Requesting a waiver — abuse by my spouse' },
+            { value: 'abuse_waiver', label: 'Requesting a waiver — abuse or extreme cruelty by my spouse' },
             { value: 'widowed_waiver', label: 'Requesting a waiver — my spouse passed away' },
+            { value: 'hardship_waiver', label: 'Requesting a waiver — removal would cause extreme hardship' },
           ],
         },
       ],
@@ -84,22 +111,41 @@ export const i751: ApplicationTypeSeed = {
     { key: 'marriage', title: 'Marriage', questions: maritalQuestions() },
   ],
   documentRequirements: [
-    { key: 'joint_finances', label: 'Evidence of commingled finances (joint bank/lease/tax returns)', category: 'relationship', required: true },
-    { key: 'green_card_copy', label: 'Copy of current conditional green card', category: 'immigration', required: true },
+    { key: 'green_card_copy', label: 'Copy of current conditional Permanent Resident Card', category: 'identity', required: true },
+    { key: 'marriage_certificate', label: 'Marriage certificate', category: 'relationship', required: true },
+    { key: 'joint_lease_or_mortgage', label: 'Joint lease or mortgage statement', category: 'relationship' },
+    { key: 'joint_bank_records', label: 'Joint bank account statements', category: 'financial' },
+    { key: 'joint_insurance', label: 'Joint insurance policy (health, auto, or life) listing both spouses', category: 'relationship' },
+    { key: 'joint_tax_records', label: 'Joint federal tax returns', category: 'financial' },
+    { key: 'utility_bills', label: 'Utility bills addressed to both spouses at the same address', category: 'relationship' },
+    { key: 'photographs', label: 'Photographs together over the course of the marriage', category: 'relationship' },
     { key: 'divorce_decree', label: 'Final divorce decree', category: 'relationship', show_if: [{ question_key: 'filing_basis', operator: 'equals', value: 'divorced_waiver' }] },
+    { key: 'death_certificate', label: "Spouse's death certificate", category: 'relationship', show_if: [{ question_key: 'filing_basis', operator: 'equals', value: 'widowed_waiver' }] },
   ],
   pricing: { service_fee_cents: 24900, print_mail_fee_cents: 1995 },
   governmentFee: { label: 'USCIS I-751 filing fee (includes biometrics)', amount_cents: 75000, source_note: 'Confirm the current fee on the USCIS Form I-751 fee page before filing.' },
 }
 
 export const i129f: ApplicationTypeSeed = {
-  slug: 'fiance-visa-petition',
+  slug: 'fiance-visa',
   form_code: 'I-129F',
-  name: "Bring My Fiancé(e) to the U.S.",
+  name: 'Bring Your Fiancé(e) to the United States',
   short_name: 'Fiancé(e) Petition',
-  goal_categories: ['fiance'],
+  goal_categories: ['fiance', 'family'],
   edition_date: '2023-10-01',
   sort_order: 70,
+  cta_text: 'Start My I-129F',
+  estimated_minutes: 30,
+  faqs: [
+    {
+      question: 'How long does my fiancé(e) have to enter the U.S. after approval?',
+      answer: 'Once the K-1 visa is issued, your fiancé(e) generally has up to 6 months to enter the United States, and you must marry within 90 days of their arrival.',
+    },
+    {
+      question: 'What happens after we marry?',
+      answer: 'Your new spouse can then apply for a green card, typically via adjustment of status (Form I-485), which is a separate application.',
+    },
+  ],
   summary: 'Petition for your foreign fiancé(e) to come to the United States on a K-1 visa so you can marry within 90 days of arrival.',
   who_its_for: 'U.S. citizens who intend to marry a foreign national fiancé(e) and have met them in person within the last 2 years.',
   eligibility_overview: 'You must be a U.S. citizen, both of you must be free to marry, and you generally must have met in person within the last 2 years.',
@@ -144,6 +190,18 @@ export const i131: ApplicationTypeSeed = {
   goal_categories: ['travel'],
   edition_date: '2024-01-01',
   sort_order: 80,
+  cta_text: 'Start My I-131',
+  estimated_minutes: 20,
+  faqs: [
+    {
+      question: 'Which travel document do I actually need?',
+      answer: 'It depends on your current status and reason for travel — Advance Parole for a pending green card application, a Reentry Permit for an extended trip as a permanent resident, or a Refugee Travel Document for asylees/refugees. Our eligibility questions help identify the right one; this is not a legal determination.',
+    },
+    {
+      question: 'Can I travel while this is pending?',
+      answer: 'Generally you should wait for the document to be issued (or for advance parole, sometimes a receipt notice with specific conditions) before traveling — leaving too early can jeopardize a pending case. Confirm current guidance for your situation.',
+    },
+  ],
   summary: 'Apply for Advance Parole, a Reentry Permit, or a Refugee Travel Document so you can travel internationally without abandoning your pending application or status.',
   who_its_for: 'Applicants with a pending green card application who need to travel, permanent residents planning an extended trip, or refugees/asylees needing a travel document.',
   eligibility_overview: 'Eligibility and the correct document depend on your current status and reason for travel.',
@@ -183,11 +241,26 @@ export const i131: ApplicationTypeSeed = {
 export const i864: ApplicationTypeSeed = {
   slug: 'affidavit-of-support',
   form_code: 'I-864',
-  name: 'Financially Sponsor a Family Member',
+  name: 'Prepare an Affidavit of Support',
   short_name: 'Affidavit of Support',
   goal_categories: ['sponsorship'],
   edition_date: '2023-08-01',
   sort_order: 90,
+  cta_text: 'Start My I-864',
+  estimated_minutes: 25,
+  faqs: [
+    {
+      question: "What if my income alone doesn't meet the requirement?",
+      answer: 'You can add a joint sponsor who separately meets the income requirement (Form I-864, filed by them), or a household member can contribute income via Form I-864A. You can also count qualifying assets.',
+    },
+    {
+      question: 'Am I financially responsible for the immigrant after they get a green card?',
+      answer: 'Yes — signing an Affidavit of Support creates a legal, enforceable obligation that generally continues until the immigrant becomes a U.S. citizen, is credited with 40 quarters of work, leaves the U.S. permanently, or dies.',
+    },
+  ],
+  associatedForms: [
+    { form_code: 'I-864A', label: 'Household Member Contract', note: 'Needed when a household member is contributing income to meet the requirement.' },
+  ],
   summary: 'Complete an Affidavit of Support to demonstrate you can financially sponsor a relative applying for a green card.',
   who_its_for: 'Petitioners (and joint sponsors) who need to show income and assets meeting 125% of the federal poverty guidelines.',
   eligibility_overview: 'You generally must show household income at or above 125% of the federal poverty guidelines for your household size, or sufficient assets to make up the difference.',
@@ -224,13 +297,21 @@ export const i864: ApplicationTypeSeed = {
 }
 
 export const ar11: ApplicationTypeSeed = {
-  slug: 'change-of-address',
+  slug: 'change-address',
   form_code: 'AR-11',
-  name: 'Change My Address',
+  name: 'Report a Change of Address',
   short_name: 'Change of Address',
-  goal_categories: ['address'],
+  goal_categories: ['address', 'other'],
   edition_date: '2023-01-01',
   sort_order: 100,
+  cta_text: 'Start My AR-11',
+  estimated_minutes: 5,
+  faqs: [
+    {
+      question: 'Do I need to file this even if I have a pending application?',
+      answer: "Yes — AR-11 updates your address with USCIS generally, but it doesn't automatically update the address on a specific pending case. You may need to separately update each pending application or petition.",
+    },
+  ],
   summary: 'Notify USCIS of your new address, which is legally required within 10 days of moving for most noncitizens.',
   who_its_for: 'Any noncitizen who has moved and needs to update USCIS with their current address.',
   eligibility_overview: 'This is a notification, not an eligibility-based application — nearly everyone who has moved needs to file it.',

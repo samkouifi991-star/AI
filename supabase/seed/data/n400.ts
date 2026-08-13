@@ -12,13 +12,27 @@ import {
 } from '../shared-questions'
 
 export const n400: ApplicationTypeSeed = {
-  slug: 'citizenship-application',
+  slug: 'citizenship',
   form_code: 'N-400',
-  name: 'U.S. Citizenship Application',
+  name: 'Apply for U.S. Citizenship',
   short_name: 'Citizenship (Naturalization)',
   goal_categories: ['citizenship'],
   edition_date: '2024-04-01',
   sort_order: 10,
+  cta_text: 'Start My N-400',
+  estimated_minutes: 45,
+  faqs: [
+    {
+      question: 'Do I need a lawyer to apply for citizenship?',
+      answer:
+        'No. Most naturalization cases are straightforward enough to prepare yourself with guided help. If your background includes prior removal proceedings, criminal history, or long absences from the U.S., consider a consultation with an immigration attorney first.',
+    },
+    {
+      question: 'Will I need to take the English and civics test?',
+      answer:
+        'Most applicants do, with exemptions and modifications available based on age, length of permanent residence, or disability. Your local USCIS field office will schedule this as part of your naturalization interview.',
+    },
+  ],
   summary:
     'Apply to become a U.S. citizen through naturalization, including the right to vote, hold a U.S. passport, and pass citizenship to your children.',
   who_its_for:

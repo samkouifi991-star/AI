@@ -2,13 +2,28 @@ import type { ApplicationTypeSeed } from '../types'
 import { nameQuestions, otherNamesQuestions, contactQuestions, maritalQuestions } from '../shared-questions'
 
 export const i130: ApplicationTypeSeed = {
-  slug: 'family-green-card-petition',
+  slug: 'family-petition',
   form_code: 'I-130',
-  name: 'Help a Family Member Get a Green Card',
+  name: 'Petition for a Family Member',
   short_name: 'Family Petition',
   goal_categories: ['family'],
   edition_date: '2023-11-01',
   sort_order: 40,
+  cta_text: 'Start My I-130',
+  estimated_minutes: 30,
+  faqs: [
+    {
+      question: 'Does filing this petition give my relative a green card right away?',
+      answer: 'No — an approved I-130 only establishes the family relationship. Your relative still needs to complete adjustment of status (I-485) or consular processing before receiving a green card, and may need to wait for a visa to become available depending on the category.',
+    },
+    {
+      question: 'What if my relative is a spouse — do I need another form?',
+      answer: 'Yes, if your spouse is inside the U.S. adjusting status, you’ll also complete Form I-130A with their biographic information — Smart USA Visa prepares both together.',
+    },
+  ],
+  associatedForms: [
+    { form_code: 'I-130A', label: 'Supplemental Spouse Information', note: 'Required when petitioning for a spouse who is adjusting status.' },
+  ],
   summary: 'File a petition as a U.S. citizen or permanent resident to establish a qualifying family relationship for a relative seeking a green card.',
   who_its_for: 'U.S. citizens and lawful permanent residents petitioning for a spouse, parent, child, or sibling.',
   eligibility_overview: 'You must be a U.S. citizen or permanent resident and prove a qualifying family relationship with documentary evidence.',

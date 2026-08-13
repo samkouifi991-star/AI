@@ -4,11 +4,23 @@ import { nameQuestions, otherNamesQuestions, contactQuestions } from '../shared-
 export const i765: ApplicationTypeSeed = {
   slug: 'work-permit',
   form_code: 'I-765',
-  name: 'Work Permit (Employment Authorization)',
+  name: 'Apply for or Renew a Work Permit',
   short_name: 'Work Permit (EAD)',
   goal_categories: ['work'],
   edition_date: '2024-03-01',
   sort_order: 30,
+  cta_text: 'Start My I-765',
+  estimated_minutes: 25,
+  faqs: [
+    {
+      question: 'How long is a work permit valid?',
+      answer: 'Validity periods vary by category, typically 1–5 years. We recommend filing a renewal several months before expiration to avoid a gap in work authorization.',
+    },
+    {
+      question: 'Can I file this at the same time as another application?',
+      answer: 'Many categories, like a pending green card application, allow you to file Form I-765 concurrently — we ask about this during eligibility screening.',
+    },
+  ],
   summary: 'Apply for or renew an Employment Authorization Document (EAD) so you can legally work in the United States.',
   who_its_for: 'Applicants with a pending green card application, certain visa holders, asylees, DACA recipients, and other eligible categories.',
   eligibility_overview: 'Eligibility depends on your current immigration category — for example, a pending I-485, asylum application, or specific visa status. We ask which category applies and tailor the questionnaire accordingly.',

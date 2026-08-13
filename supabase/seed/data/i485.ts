@@ -11,13 +11,27 @@ import {
 } from '../shared-questions'
 
 export const i485: ApplicationTypeSeed = {
-  slug: 'green-card-adjustment-of-status',
+  slug: 'adjustment-of-status',
   form_code: 'I-485',
-  name: 'Green Card Application (Adjustment of Status)',
+  name: 'Apply for a Green Card From Inside the United States',
   short_name: 'Green Card — Adjustment of Status',
   goal_categories: ['green-card'],
   edition_date: '2024-01-01',
   sort_order: 20,
+  cta_text: 'Start My I-485',
+  estimated_minutes: 50,
+  faqs: [
+    {
+      question: 'Do I need an underlying petition before I can file this?',
+      answer:
+        'Almost always yes — a family petition (I-130), employment petition (I-140), or another qualifying category that makes a visa immediately available to you. We ask about this during eligibility screening.',
+    },
+    {
+      question: 'Can I work while my I-485 is pending?',
+      answer:
+        'Not automatically — you generally need to separately apply for a work permit (Form I-765), which many applicants file at the same time as their I-485.',
+    },
+  ],
   summary:
     'Apply for lawful permanent resident status ("green card") from inside the United States, based on a family, employment, or other qualifying category.',
   who_its_for:

@@ -56,6 +56,9 @@ export type ValidationRuleSeed = {
   severity_on_fail?: 'needs_attention' | 'potential_issue'
 }
 
+export type FaqSeed = { question: string; answer: string }
+export type AssociatedFormSeed = { form_code: string; label: string; note?: string }
+
 export type DocumentRequirementSeed = {
   key: string
   label: string
@@ -77,6 +80,10 @@ export type ApplicationTypeSeed = {
   workflow_overview: string
   sort_order: number
   edition_date: string
+  cta_text?: string
+  estimated_minutes?: number
+  faqs?: FaqSeed[]
+  associatedForms?: AssociatedFormSeed[]
   sections: SectionSeed[]
   validationRules?: ValidationRuleSeed[]
   documentRequirements: DocumentRequirementSeed[]

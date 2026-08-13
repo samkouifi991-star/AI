@@ -27,6 +27,9 @@ export type QuestionType =
   | 'phone'
   | 'file'
 
+export type Faq = { question: string; answer: string }
+export type AssociatedForm = { form_code: string; label: string; note?: string }
+
 export interface ApplicationType {
   id: string
   slug: string
@@ -40,6 +43,10 @@ export interface ApplicationType {
   workflow_overview: string
   is_active: boolean
   sort_order: number
+  faqs: Faq[]
+  cta_text: string | null
+  estimated_minutes: number | null
+  associated_forms: AssociatedForm[]
 }
 
 export interface FormVersion {

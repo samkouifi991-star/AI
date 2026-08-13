@@ -19,10 +19,17 @@ const goalLabels: Record<string, string> = {
   fiance: 'Fiancé(e)',
   work: 'Work Authorization',
   travel: 'Travel Documents',
-  sponsorship: 'Sponsorship',
+  sponsorship: 'Financial Sponsorship',
   address: 'Change of Address',
   'citizenship-documents': 'Citizenship Documents',
   other: 'Other Immigration Forms',
+}
+
+// Strips hyphens (and collapses whitespace) so "N400" matches "N-400" and
+// "I751" matches "I-751", while phrase searches like "green card" still work
+// unchanged since there's no hyphen to strip there.
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/-/g, '').replace(/\s+/g, ' ').trim()
 }
 
 export function ApplicationsDirectory({ applications, initialGoal }: { applications: AppRow[]; initialGoal?: string }) {
@@ -36,11 +43,14 @@ export function ApplicationsDirectory({ applications, initialGoal }: { applicati
   }, [applications])
 
   const filtered = applications.filter((app) => {
+    const q = normalize(query)
     const matchesQuery =
-      query.trim().length === 0 ||
-      app.name.toLowerCase().includes(query.toLowerCase()) ||
-      app.form_code.toLowerCase().includes(query.toLowerCase()) ||
-      app.summary.toLowerCase().includes(query.toLowerCase())
+      q.length === 0 ||
+      normalize(app.name).includes(q) ||
+      normalize(app.short_name).includes(q) ||
+      normalize(app.form_code).includes(q) ||
+      normalize(app.summary).includes(q) ||
+      normalize(app.goal_categories.join(' ')).includes(q)
     const matchesGoal = !goal || app.goal_categories.includes(goal)
     return matchesQuery && matchesGoal
   })

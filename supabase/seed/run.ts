@@ -46,6 +46,10 @@ async function main() {
           workflow_overview: app.workflow_overview,
           sort_order: app.sort_order,
           is_active: true,
+          cta_text: app.cta_text ?? `Start My ${app.form_code}`,
+          estimated_minutes: app.estimated_minutes ?? null,
+          faqs: app.faqs ?? [],
+          associated_forms: app.associatedForms ?? [],
         },
         { onConflict: 'slug' }
       )

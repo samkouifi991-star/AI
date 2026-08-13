@@ -4,9 +4,23 @@ import { revalidatePath } from 'next/cache'
 import { requireAdmin, requireStaff } from '@/lib/admin'
 import { logAudit } from '@/lib/audit'
 
+function parseJsonField<T>(raw: string, fallback: T): T {
+  if (!raw.trim()) return fallback
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    throw new Error('Invalid JSON — check the syntax and try again.')
+  }
+}
+
 export async function updateApplicationType(formData: FormData) {
   const { supabase, user } = await requireAdmin()
   const id = String(formData.get('id'))
+  const goalCategories = String(formData.get('goal_categories') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+
   const updates = {
     name: String(formData.get('name') ?? ''),
     summary: String(formData.get('summary') ?? ''),
@@ -15,6 +29,11 @@ export async function updateApplicationType(formData: FormData) {
     workflow_overview: String(formData.get('workflow_overview') ?? ''),
     is_active: formData.get('is_active') === 'on',
     sort_order: Number(formData.get('sort_order') ?? 0),
+    goal_categories: goalCategories,
+    cta_text: String(formData.get('cta_text') ?? '').trim() || null,
+    estimated_minutes: formData.get('estimated_minutes') ? Number(formData.get('estimated_minutes')) : null,
+    faqs: parseJsonField(String(formData.get('faqs') ?? ''), []),
+    associated_forms: parseJsonField(String(formData.get('associated_forms') ?? ''), []),
   }
   const { error } = await supabase.from('application_types').update(updates).eq('id', id)
   if (error) throw error
