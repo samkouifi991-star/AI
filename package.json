@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "seed": "tsx supabase/seed/run.ts"
+    "seed": "tsx supabase/seed/run.ts",
+    "verify:routes": "tsx scripts/verify-application-routes.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
