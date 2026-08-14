@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase/client';
+import OpeningHoursPanel from '@/components/teach/OpeningHoursPanel';
 
 type Settings = {
   pickup_enabled: boolean;
@@ -45,8 +46,8 @@ export default function RestaurantSettingsPage() {
   const supabase = supabaseBrowser();
   const [businessId, setBusinessId] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -66,18 +67,23 @@ export default function RestaurantSettingsPage() {
 
   function update<K extends keyof Settings>(key: K, value: Settings[K]) {
     setSettings((s) => ({ ...s, [key]: value }));
-    setSaved(false);
+    setSaveStatus('idle');
   }
 
   async function handleSave() {
     if (!businessId) return;
-    setSaving(true);
+    setSaveStatus('saving');
+    setSaveError(null);
     const { error } = await supabase.from('restaurant_settings').upsert(
       { business_id: businessId, ...settings, updated_at: new Date().toISOString() },
       { onConflict: 'business_id' }
     );
-    setSaving(false);
-    if (!error) setSaved(true);
+    if (error) {
+      setSaveStatus('failed');
+      setSaveError(error.message);
+    } else {
+      setSaveStatus('saved');
+    }
   }
 
   return (
@@ -87,7 +93,8 @@ export default function RestaurantSettingsPage() {
         <p className="text-slate-600 text-sm">Pickup, delivery, taxes, tips, and discounts your AI applies to every order.</p>
       </div>
 
-      {saved && <div className="text-sm text-success bg-green-50 rounded-lg px-3 py-2">Saved — takes effect on the next call.</div>}
+      {saveStatus === 'saved' && <div className="text-sm text-success bg-green-50 rounded-lg px-3 py-2">Saved — takes effect on the next call.</div>}
+      {saveStatus === 'failed' && <div className="text-sm text-danger bg-red-50 rounded-lg px-3 py-2">Failed to save{saveError ? `: ${saveError}` : '.'}</div>}
 
       <section className="card space-y-3">
         <h2 className="font-display text-lg font-semibold">Pickup</h2>
@@ -134,6 +141,14 @@ export default function RestaurantSettingsPage() {
       </section>
 
       <section className="card space-y-3">
+        <h2 className="font-display text-lg font-semibold">Opening hours</h2>
+        <p className="text-sm text-slate-600">
+          These are the hours Ava uses on every call — the same hours shown in Teach Ava and onboarding. Changing them here updates Ava immediately.
+        </p>
+        <OpeningHoursPanel />
+      </section>
+
+      <section className="card space-y-3">
         <h2 className="font-display text-lg font-semibold">Taxes, tips, and discounts</h2>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -174,8 +189,8 @@ export default function RestaurantSettingsPage() {
         </label>
       </section>
 
-      <button className="btn-primary" onClick={handleSave} disabled={saving || !businessId}>
-        {saving ? 'Saving…' : 'Save settings'}
+      <button className="btn-primary" onClick={handleSave} disabled={saveStatus === 'saving' || !businessId}>
+        {saveStatus === 'saving' ? 'Saving…' : 'Save settings'}
       </button>
     </div>
   );

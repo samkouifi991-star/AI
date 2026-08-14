@@ -2,36 +2,28 @@
 
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase/client';
+import OpeningHoursPanel from './OpeningHoursPanel';
 
-const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-type DayRow = { dayOfWeek: number; openTime: string; closeTime: string; isClosed: boolean };
 type Faq = { id?: string; question: string; answer: string };
-
-function defaultDays(): DayRow[] {
-  return DAY_LABELS.map((_, i) => ({ dayOfWeek: i, openTime: '09:00', closeTime: '17:00', isClosed: i === 0 }));
-}
 
 /**
  * "Teach Ava about the business" — shared between onboarding's Teach-her
  * step and /teach's Business knowledge tab. Every field here becomes a
  * real, searchable knowledge chunk (lib/business-knowledge-sync.ts) —
  * never appended to the system prompt — so it's retrieved the same way
- * an uploaded document would be, live on the very next call.
+ * an uploaded document would be, live on the very next call. Hours are
+ * delegated entirely to OpeningHoursPanel — the same component
+ * /restaurant-settings uses — so there is exactly one hours editor, not
+ * a simplified copy living here too.
  */
 export default function BusinessKnowledgePanel({ isRestaurant, onChanged }: { isRestaurant: boolean; onChanged?: () => void }) {
   const supabase = supabaseBrowser();
-  const [businessId, setBusinessId] = useState<string | null>(null);
 
   const [description, setDescription] = useState('');
   const [address, setAddress] = useState('');
   const [policiesText, setPoliciesText] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMsg, setProfileMsg] = useState<string | null>(null);
-
-  const [days, setDays] = useState<DayRow[]>(defaultDays());
-  const [hoursSaving, setHoursSaving] = useState(false);
-  const [hoursMsg, setHoursMsg] = useState<string | null>(null);
 
   const [faqs, setFaqs] = useState<Faq[]>([]);
   const [faqDraft, setFaqDraft] = useState<Faq>({ question: '', answer: '' });
@@ -47,27 +39,15 @@ export default function BusinessKnowledgePanel({ isRestaurant, onChanged }: { is
       if (!user) return;
       const { data: business } = await supabase.from('businesses').select('id').eq('owner_user_id', user.id).single();
       if (!business) return;
-      setBusinessId(business.id);
 
-      const [profileRes, hoursRes, faqsRes] = await Promise.all([
+      const [profileRes, faqsRes] = await Promise.all([
         fetch('/api/teach/business-profile').then((r) => r.json()),
-        fetch('/api/teach/hours').then((r) => r.json()),
         fetch('/api/teach/faqs').then((r) => r.json())
       ]);
       if (profileRes.profile) {
         setDescription(profileRes.profile.description ?? '');
         setAddress(profileRes.profile.address ?? '');
         setPoliciesText(profileRes.profile.policies_text ?? '');
-      }
-      if (hoursRes.hours?.length) {
-        setDays(
-          DAY_LABELS.map((_, i) => {
-            const row = hoursRes.hours.find((h: any) => h.day_of_week === i);
-            return row
-              ? { dayOfWeek: i, openTime: row.open_time?.slice(0, 5) ?? '09:00', closeTime: row.close_time?.slice(0, 5) ?? '17:00', isClosed: row.is_closed }
-              : { dayOfWeek: i, openTime: '09:00', closeTime: '17:00', isClosed: true };
-          })
-        );
       }
       setFaqs(faqsRes.faqs?.map((f: any) => ({ id: f.id, question: f.question, answer: f.answer })) ?? []);
       setLoading(false);
@@ -87,20 +67,6 @@ export default function BusinessKnowledgePanel({ isRestaurant, onChanged }: { is
     const data = await res.json();
     setProfileSaving(false);
     setProfileMsg(data.knowledgeSynced ? 'Saved — searchable on the next call.' : data.error ?? 'Saved.');
-    onChanged?.();
-  }
-
-  async function saveHours() {
-    setHoursSaving(true);
-    setHoursMsg(null);
-    const res = await fetch('/api/teach/hours', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ days })
-    });
-    const data = await res.json();
-    setHoursSaving(false);
-    setHoursMsg(data.knowledgeSynced ? 'Saved — searchable on the next call.' : data.error ?? 'Saved.');
     onChanged?.();
   }
 
@@ -148,29 +114,8 @@ export default function BusinessKnowledgePanel({ isRestaurant, onChanged }: { is
       </div>
 
       <div>
-        <label className="text-bp-ink-mid" style={{ fontSize: 12.5, fontWeight: 500, display: 'block', marginBottom: 6 }}>Hours</label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {days.map((d, i) => (
-            <div key={d.dayOfWeek} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ width: 90, fontSize: 13 }}>{DAY_LABELS[d.dayOfWeek]}</span>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12 }}>
-                <input type="checkbox" checked={d.isClosed} onChange={(e) => setDays((ds) => ds.map((x, xi) => (xi === i ? { ...x, isClosed: e.target.checked } : x)))} />
-                Closed
-              </label>
-              {!d.isClosed && (
-                <>
-                  <input type="time" className="input" style={{ width: 120 }} value={d.openTime} onChange={(e) => setDays((ds) => ds.map((x, xi) => (xi === i ? { ...x, openTime: e.target.value } : x)))} />
-                  <span className="text-bp-ink-faint">–</span>
-                  <input type="time" className="input" style={{ width: 120 }} value={d.closeTime} onChange={(e) => setDays((ds) => ds.map((x, xi) => (xi === i ? { ...x, closeTime: e.target.value } : x)))} />
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
-          <button className="btn-secondary" onClick={saveHours} disabled={hoursSaving}>{hoursSaving ? 'Saving…' : 'Save hours'}</button>
-          {hoursMsg && <span className="text-bp-ink-muted" style={{ fontSize: 12 }}>{hoursMsg}</span>}
-        </div>
+        <label className="text-bp-ink-mid" style={{ fontSize: 12.5, fontWeight: 500, display: 'block', marginBottom: 6 }}>Opening hours</label>
+        <OpeningHoursPanel onChanged={onChanged} />
       </div>
 
       <div>

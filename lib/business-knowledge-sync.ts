@@ -1,19 +1,6 @@
 import { supabaseServiceRole } from './supabase/admin';
 import { embedText } from './openai';
-
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-function formatHours(rows: { day_of_week: number; open_time: string | null; close_time: string | null; is_closed: boolean }[]): string {
-  if (rows.length === 0) return '';
-  const byDay = new Map(rows.map((r) => [r.day_of_week, r]));
-  const lines: string[] = [];
-  for (let d = 0; d < 7; d++) {
-    const row = byDay.get(d);
-    if (!row) continue;
-    lines.push(row.is_closed || !row.open_time || !row.close_time ? `${DAY_NAMES[d]}: closed` : `${DAY_NAMES[d]}: ${row.open_time}–${row.close_time}`);
-  }
-  return lines.join('\n');
-}
+import { groupBusinessHours, formatHoursText, formatSpecialHoursText } from './hours';
 
 /**
  * Rebuilds the single "Business profile" knowledge chunk from
@@ -29,17 +16,25 @@ function formatHours(rows: { day_of_week: number; open_time: string | null; clos
 export async function syncBusinessProfileChunk(businessId: string): Promise<void> {
   const supabase = supabaseServiceRole();
 
-  const [{ data: business }, { data: hoursRows }] = await Promise.all([
-    supabase.from('businesses').select('name, description, address, policies_text, service_area').eq('id', businessId).single(),
-    supabase.from('business_hours').select('day_of_week, open_time, close_time, is_closed').eq('business_id', businessId).order('day_of_week')
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [{ data: business }, { data: hoursRows }, { data: specialRows }] = await Promise.all([
+    supabase.from('businesses').select('name, description, address, policies_text, service_area, timezone').eq('id', businessId).single(),
+    supabase.from('business_hours').select('day_of_week, open_time, close_time, is_closed').eq('business_id', businessId).order('day_of_week'),
+    // Only upcoming exceptions matter for what Ava should say — past
+    // closures aren't relevant knowledge for a future caller.
+    supabase.from('special_hours').select('date, is_closed, open_time, close_time, note').eq('business_id', businessId).gte('date', todayIso).order('date')
   ]);
   if (!business) return;
+
+  const groupedDays = hoursRows ? groupBusinessHours(hoursRows) : [];
+  const hasAnyOpenDay = groupedDays.some((d) => !d.isClosed);
 
   const sections = [
     business.description ? `About ${business.name}: ${business.description}` : null,
     business.address ? `Location: ${business.address}` : null,
     business.service_area ? `Service area: ${business.service_area}` : null,
-    hoursRows && hoursRows.length > 0 ? `Hours:\n${formatHours(hoursRows)}` : null,
+    hasAnyOpenDay ? `Hours (${business.timezone ?? 'local time'}):\n${formatHoursText(groupedDays)}` : null,
+    specialRows && specialRows.length > 0 ? `Upcoming exceptions to normal hours:\n${formatSpecialHoursText(specialRows)}` : null,
     business.policies_text ? `Policies: ${business.policies_text}` : null
   ].filter(Boolean);
 

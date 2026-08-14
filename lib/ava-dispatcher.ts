@@ -6,6 +6,7 @@ import { sendSms, appointmentConfirmationSms } from './twilio';
 import { detectLanguage, translateText, SUPPORTED_LANGUAGES } from './language';
 import { computeOrderTotals, createOrderPaymentLink, releaseExpiredHolds, lineTotal, OrderItemInput } from './orders';
 import { recordKnowledgeGap, isHumanHandoffRequest } from './knowledge-gaps';
+import { groupBusinessHours, computeOpenStatus, formatTime12h, DAY_NAMES } from './hours';
 
 /**
  * The single implementation of every tool Ava can call, shared between a
@@ -91,6 +92,35 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
 
       const translated = activeLanguage === 'en' ? answer : await translateText(answer, activeLanguage);
       return { result: translated };
+    }
+
+    case 'check_business_hours': {
+      const { data: business } = await supabase.from('businesses').select('timezone').eq('id', businessId).single();
+      const timezone = business?.timezone ?? 'America/New_York';
+      const [{ data: hoursRows }, { data: specialRows }] = await Promise.all([
+        supabase.from('business_hours').select('day_of_week, open_time, close_time, is_closed').eq('business_id', businessId),
+        supabase.from('special_hours').select('date, is_closed, open_time, close_time, note').eq('business_id', businessId)
+      ]);
+      const days = groupBusinessHours(hoursRows ?? []);
+
+      if (params.day) {
+        const dayIndex = DAY_NAMES.findIndex((d) => d.toLowerCase() === String(params.day).toLowerCase());
+        if (dayIndex === -1) return { result: `"${params.day}" isn't a day of the week I recognize.` };
+        const dayHours = days.find((d) => d.dayOfWeek === dayIndex);
+        if (!dayHours || dayHours.isClosed) return { result: `We're closed on ${DAY_NAMES[dayIndex]}s.` };
+        return { result: `On ${DAY_NAMES[dayIndex]}s we're open ${dayHours.ranges.map((r) => `${formatTime12h(r.openTime)}–${formatTime12h(r.closeTime)}`).join(', ')}.` };
+      }
+
+      const status = computeOpenStatus(new Date(), timezone, days, specialRows ?? []);
+      if (status.isOpenNow) {
+        return { result: `Yes, we're open right now. Today's hours: ${status.todayHoursLabel}.${status.note ? ` ${status.note}` : ''}` };
+      }
+      return {
+        result:
+          status.todayHoursLabel === 'closed'
+            ? `We're closed today.${status.note ? ` ${status.note}` : ''}`
+            : `We're closed right now. Today's hours are ${status.todayHoursLabel}.${status.note ? ` ${status.note}` : ''}`
+      };
     }
 
     case 'detect_language': {
