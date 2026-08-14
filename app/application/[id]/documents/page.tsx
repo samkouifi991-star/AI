@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { getAccessibleApplication, AccessDeniedError } from '@/lib/applications'
 import { getApplicationTypeById, getFullSchema, getAnswersBundle } from '@/lib/engine/schema'
 import { syncDocumentChecklist } from '@/lib/engine/documents'
+import { getPackageForApplication, getFlatFeeCents } from '@/lib/engine/translation-package'
 import { DocumentChecklist } from '@/components/questionnaire/DocumentChecklist'
 
 export default async function DocumentsPage({ params }: { params: { id: string } }) {
@@ -24,6 +25,11 @@ export default async function DocumentsPage({ params }: { params: { id: string }
     ? await supabase.from('translations').select('*').in('id', translationIds)
     : { data: [] }
 
+  const [translationPackage, flatFeeCents] = await Promise.all([
+    getPackageForApplication(supabase, application.id),
+    getFlatFeeCents(supabase),
+  ])
+
   const items = checklist.map((c) => ({
     id: c.applicationDocument!.id,
     label: c.requirement.label,
@@ -31,10 +37,20 @@ export default async function DocumentsPage({ params }: { params: { id: string }
     description: c.requirement.description,
     status: c.applicationDocument!.status,
     originalFilename: c.applicationDocument!.original_filename,
+    needsTranslation: c.applicationDocument!.needs_translation ?? false,
     translation: c.applicationDocument!.translation_id
       ? (() => {
           const t = translations?.find((tr) => tr.id === c.applicationDocument!.translation_id)
-          return t ? { id: t.id, status: t.status, sourceLanguage: t.source_language, priceCents: t.price_cents } : null
+          return t
+            ? {
+                id: t.id,
+                status: t.status,
+                sourceLanguage: t.source_language,
+                selfProvided: t.self_provided,
+                hasTranslatedFile: Boolean(t.translated_storage_path),
+                hasCertificationFile: Boolean(t.certification_storage_path),
+              }
+            : null
         })()
       : null,
   }))
@@ -44,12 +60,17 @@ export default async function DocumentsPage({ params }: { params: { id: string }
       <p className="text-sm font-semibold text-harbor-700">{applicationType.form_code} — {applicationType.name}</p>
       <h1 className="mt-2 text-2xl font-bold">Your document checklist</h1>
       <p className="mt-2 max-w-2xl text-ink-600">
-        Personalized based on your answers. Upload PDF, JPG, or PNG files — we'll flag anything
-        that still needs a certified translation.
+        Personalized based on your answers. Upload PDF, JPG, or PNG files — if anything isn't in
+        English, we'll help you get it translated.
       </p>
 
       <div className="mt-8 max-w-3xl">
-        <DocumentChecklist applicationId={application.id} items={items} />
+        <DocumentChecklist
+          applicationId={application.id}
+          items={items}
+          hasPackage={Boolean(translationPackage)}
+          flatFeeCents={flatFeeCents}
+        />
       </div>
 
       <div className="mt-10 flex max-w-3xl items-center justify-between">

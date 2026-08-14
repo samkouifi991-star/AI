@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { getAccessibleApplication, AccessDeniedError } from '@/lib/applications'
 import { getApplicationTypeById } from '@/lib/engine/schema'
 import { getPricingForApplicationType, effectiveServiceFeeCents } from '@/lib/engine/pricing'
+import { getPackageForApplication } from '@/lib/engine/translation-package'
 import { CheckoutPanel } from '@/components/questionnaire/CheckoutPanel'
 
 export default async function CheckoutPage({ params }: { params: { id: string } }) {
@@ -21,16 +22,7 @@ export default async function CheckoutPage({ params }: { params: { id: string } 
 
   const applicationType = await getApplicationTypeById(supabase, application.application_type_id)
   const { pricing, governmentFees } = await getPricingForApplicationType(supabase, application.application_type_id)
-
-  const { data: docs } = await supabase
-    .from('application_documents')
-    .select('translation_id')
-    .eq('application_id', application.id)
-    .not('translation_id', 'is', null)
-  const translationIds = (docs ?? []).map((d) => d.translation_id).filter(Boolean) as string[]
-  const { data: translations } = translationIds.length
-    ? await supabase.from('translations').select('*').in('id', translationIds)
-    : { data: [] }
+  const translationPackage = await getPackageForApplication(supabase, application.id)
 
   return (
     <div className="mx-auto max-w-xl">
@@ -44,10 +36,17 @@ export default async function CheckoutPage({ params }: { params: { id: string } 
       <div className="mt-8">
         <CheckoutPanel
           applicationId={application.id}
+          applicationLabel={`Smart USA Visa ${applicationType.form_code} Preparation`}
           serviceFeeCents={effectiveServiceFeeCents(pricing)}
           printMailFeeCents={pricing.print_mail_fee_cents}
           governmentFees={governmentFees.map((f) => ({ label: f.label, amountCents: f.amount_cents }))}
-          translationLines={(translations ?? []).map((t) => ({ label: t.source_language, amountCents: t.price_cents, status: t.status }))}
+          translationPackage={
+            translationPackage && translationPackage.payment_status === 'pending'
+              ? { priceCents: translationPackage.price_cents }
+              : translationPackage && translationPackage.payment_status === 'paid'
+                ? { priceCents: translationPackage.price_cents, alreadyPaid: true }
+                : null
+          }
         />
       </div>
 

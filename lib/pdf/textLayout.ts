@@ -134,6 +134,27 @@ export class PdfWriter {
   }
 }
 
+// Wraps a JPG/PNG upload (a translated document or certification is often
+// a phone photo, not a PDF) into a single-page PDF sized to the image, so
+// it can be merged into the bundle alongside real PDF pages.
+export async function wrapImageAsPdf(bytes: Uint8Array, contentType: string): Promise<Uint8Array> {
+  const doc = await PDFDocument.create()
+  const image = contentType === 'image/png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)
+  const maxWidth = 612 - MARGIN * 2
+  const maxHeight = 792 - MARGIN * 2
+  const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1)
+  const width = image.width * scale
+  const height = image.height * scale
+  const page = doc.addPage([612, 792])
+  page.drawImage(image, {
+    x: (612 - width) / 2,
+    y: (792 - height) / 2,
+    width,
+    height,
+  })
+  return doc.save()
+}
+
 export async function mergePdfs(buffers: Uint8Array[]): Promise<Uint8Array> {
   const merged = await PDFDocument.create()
   for (const bytes of buffers) {

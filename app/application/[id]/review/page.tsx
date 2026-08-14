@@ -4,6 +4,7 @@ import { getAccessibleApplication, AccessDeniedError } from '@/lib/applications'
 import { getApplicationTypeById, getFullSchema, getAnswersBundle } from '@/lib/engine/schema'
 import { runValidationEngine, overallReadiness } from '@/lib/engine/validation'
 import { syncDocumentChecklist } from '@/lib/engine/documents'
+import type { Translation } from '@/lib/supabase/types'
 
 const severityIcon: Record<string, string> = { complete: '✓', needs_attention: '!', potential_issue: '⚠' }
 const severityClass: Record<string, string> = {
@@ -31,6 +32,13 @@ export default async function ReviewPage({ params }: { params: { id: string } })
 
   const checklist = await syncDocumentChecklist(supabase, application.id, application.application_type_id, answers.flat)
   const missingRequired = checklist.filter((c) => c.requirement.required && c.applicationDocument?.status === 'missing')
+
+  const { data: translationJobs } = await supabase
+    .from('translations')
+    .select('*')
+    .eq('application_id', application.id)
+    .order('created_at')
+  const jobs = (translationJobs ?? []) as Translation[]
 
   const isReady = results.every((r) => r.severity === 'complete') && missingRequired.length === 0
 
@@ -91,6 +99,30 @@ export default async function ReviewPage({ params }: { params: { id: string } })
             <p className="mt-2 text-sm text-ink-600">{missingRequired.length} required document{missingRequired.length === 1 ? '' : 's'} still missing.</p>
           )}
         </div>
+
+        {jobs.length > 0 && (
+          <div className="card">
+            <div className="flex items-center gap-2">
+              <span className={`font-bold ${jobs.every((j) => j.status === 'completed') ? 'text-success-600' : 'text-warning-500'}`}>
+                {jobs.every((j) => j.status === 'completed') ? '✓' : '⚠'}
+              </span>
+              <span className="font-heading font-semibold">Document Translations</span>
+            </div>
+            <ul className="mt-3 space-y-1 text-sm text-ink-700">
+              {jobs.map((job) => (
+                <li key={job.id}>
+                  {job.status === 'completed'
+                    ? `✓ ${job.document_label ?? 'Document'} + English Translation Complete`
+                    : job.status === 'in_progress'
+                      ? `${job.document_label ?? 'Document'} — Translation In Progress`
+                      : job.status === 'needs_attention'
+                        ? `⚠ ${job.document_label ?? 'Document'} — Needs Attention`
+                        : `⚠ ${job.document_label ?? 'Document'} — English translation required`}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
 
       <div className="mt-10 flex items-center justify-between">

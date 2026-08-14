@@ -1,9 +1,10 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import { PdfWriter, mergePdfs } from './textLayout'
+import { PdfWriter, mergePdfs, wrapImageAsPdf } from './textLayout'
 import { getFullSchema, getAnswersBundle, getApplicationTypeById, type SectionWithQuestions } from '@/lib/engine/schema'
 import { syncDocumentChecklist } from '@/lib/engine/documents'
-import { packageStoragePath, uploadToBucket, PACKAGES_BUCKET } from '@/lib/storage'
-import type { Question } from '@/lib/supabase/types'
+import { packageStoragePath, uploadToBucket, downloadFromBucket, DOCUMENTS_BUCKET, PACKAGES_BUCKET } from '@/lib/storage'
+import type { Question, Translation } from '@/lib/supabase/types'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 function formatValue(question: Question, raw: unknown): string {
   if (raw === null || raw === undefined || raw === '') return '—'
@@ -146,6 +147,67 @@ async function buildCoverSheet(applicantName: string, formCode: string, formName
   return writer.bytes()
 }
 
+function isPdfPath(path: string): boolean {
+  return path.toLowerCase().endsWith('.pdf')
+}
+
+// Loads a stored upload (PDF, JPG, or PNG) as PDF bytes ready to merge —
+// images get wrapped in a single-page PDF first. Returns null if the file
+// is missing, so a broken reference never fails the whole package build.
+async function loadAsPdfBytes(bucket: string, path: string | null): Promise<Uint8Array | null> {
+  if (!path) return null
+  try {
+    const bytes = await downloadFromBucket(bucket, path)
+    if (isPdfPath(path)) return bytes
+    const contentType = path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
+    return await wrapImageAsPdf(bytes, contentType)
+  } catch (err) {
+    console.error(`Could not load ${path} for package assembly`, err)
+    return null
+  }
+}
+
+async function buildSectionDivider(title: string): Promise<Uint8Array> {
+  const writer = await PdfWriter.create(title)
+  writer.heading(title)
+  return writer.bytes()
+}
+
+// Completed translations (and any originals the customer supplied their
+// own translation for) become part of the final package automatically —
+// original, translation, and certification, grouped per document — so the
+// customer never has to download and re-upload anything themselves.
+async function buildTranslationDocumentsSection(admin: ReturnType<typeof createAdminClient>, applicationId: string): Promise<Uint8Array[]> {
+  const { data: jobs } = await admin
+    .from('translations')
+    .select('*')
+    .eq('application_id', applicationId)
+    .eq('status', 'completed')
+  const completedJobs = (jobs ?? []) as Translation[]
+  if (completedJobs.length === 0) return []
+
+  const parts: Uint8Array[] = [await buildSectionDivider('Supporting Documents — Translations')]
+
+  for (const job of completedJobs) {
+    const { data: doc } = await admin
+      .from('application_documents')
+      .select('storage_path')
+      .eq('id', job.application_document_id)
+      .single()
+
+    const label = job.document_label ?? 'Document'
+    const original = await loadAsPdfBytes(DOCUMENTS_BUCKET, doc?.storage_path ?? null)
+    const translated = await loadAsPdfBytes(DOCUMENTS_BUCKET, job.translated_storage_path)
+    const certification = await loadAsPdfBytes(DOCUMENTS_BUCKET, job.certification_storage_path)
+
+    if (original) parts.push(await buildSectionDivider(`${label} — Original`), original)
+    if (translated) parts.push(await buildSectionDivider(`${label} — English Translation`), translated)
+    if (certification) parts.push(await buildSectionDivider(`${label} — Translator Certification`), certification)
+  }
+
+  return parts
+}
+
 export async function generatePackage(applicationId: string) {
   const admin = createAdminClient()
 
@@ -181,7 +243,8 @@ export async function generatePackage(applicationId: string) {
     buildCoverSheet(applicantName, applicationType.form_code, applicationType.name),
   ])
 
-  const bundleBytes = await mergePdfs([coverBytes, formsBytes, checklistBytes, instructionsBytes])
+  const translationDocuments = await buildTranslationDocumentsSection(admin, applicationId)
+  const bundleBytes = await mergePdfs([coverBytes, formsBytes, checklistBytes, instructionsBytes, ...translationDocuments])
 
   const [formsPath, instructionsPath, checklistPath, coverPath, bundlePath] = await Promise.all([
     uploadToBucket(PACKAGES_BUCKET, packageStoragePath(applicationId, 'form-data-sheet.pdf'), formsBytes, 'application/pdf'),

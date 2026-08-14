@@ -22,6 +22,13 @@ export async function uploadToBucket(bucket: string, path: string, file: ArrayBu
   return path
 }
 
+export async function downloadFromBucket(bucket: string, path: string): Promise<Uint8Array> {
+  const admin = createAdminClient()
+  const { data, error } = await admin.storage.from(bucket).download(path)
+  if (error || !data) throw error ?? new Error('Could not download file')
+  return new Uint8Array(await data.arrayBuffer())
+}
+
 export async function getSignedUrl(bucket: string, path: string, expiresInSeconds = 300) {
   const admin = createAdminClient()
   const { data, error } = await admin.storage.from(bucket).createSignedUrl(path, expiresInSeconds)

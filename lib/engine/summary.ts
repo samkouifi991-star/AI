@@ -1,8 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Application } from '@/lib/supabase/types'
+import type { Application, Translation } from '@/lib/supabase/types'
 import { getApplicationTypeById, getFullSchema, getAnswersBundle } from './schema'
 import { runValidationEngine } from './validation'
 import { syncDocumentChecklist } from './documents'
+import { getPackageForApplication, computePackageDisplayStatus, type TranslationPackageDisplayStatus } from './translation-package'
 
 export type ApplicationSummary = {
   applicationType: Awaited<ReturnType<typeof getApplicationTypeById>>
@@ -10,6 +11,7 @@ export type ApplicationSummary = {
   documentsUploaded: number
   documentsTotal: number
   translationsInProgress: number
+  translationPackageStatus: TranslationPackageDisplayStatus
   reviewIssues: number
   paymentStatus: 'not_purchased' | 'pending' | 'paid'
   packageReady: boolean
@@ -25,11 +27,13 @@ export async function getApplicationSummary(supabase: SupabaseClient, applicatio
   const documentsTotal = checklist.length
   const documentsUploaded = checklist.filter((c) => c.applicationDocument?.status !== 'missing').length
 
-  const translationIds = checklist.map((c) => c.applicationDocument?.translation_id).filter(Boolean) as string[]
-  const { data: translations } = translationIds.length
-    ? await supabase.from('translations').select('status').in('id', translationIds)
-    : { data: [] }
-  const translationsInProgress = (translations ?? []).filter((t) => t.status !== 'completed' && t.status !== 'delivered').length
+  const [translationPackage, { data: translationJobs }] = await Promise.all([
+    getPackageForApplication(supabase, application.id),
+    supabase.from('translations').select('status, self_provided').eq('application_id', application.id),
+  ])
+  const jobs = (translationJobs ?? []) as Pick<Translation, 'status' | 'self_provided'>[]
+  const translationsInProgress = jobs.filter((t) => t.status !== 'completed').length
+  const translationPackageStatus = computePackageDisplayStatus(translationPackage, jobs)
 
   const { data: rules } = await supabase.from('validation_rules').select('*').eq('application_type_id', application.application_type_id)
   const results = runValidationEngine(schema, answers, rules ?? [])
@@ -64,6 +68,7 @@ export async function getApplicationSummary(supabase: SupabaseClient, applicatio
     documentsUploaded,
     documentsTotal,
     translationsInProgress,
+    translationPackageStatus,
     reviewIssues,
     paymentStatus,
     packageReady: Boolean(pkg),

@@ -1,5 +1,7 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import { getFlatFeeCents } from '@/lib/engine/translation-package'
+import { formatCents } from '@/lib/engine/pricing'
 
 const goals = [
   { icon: '🪪', title: 'Get a Green Card', href: '/find-my-application?goal=green-card' },
@@ -20,12 +22,15 @@ const steps = [
 
 export default async function HomePage() {
   const supabase = createClient()
-  const { data: featured } = await supabase
-    .from('application_types')
-    .select('slug, form_code, name, short_name, summary')
-    .eq('is_active', true)
-    .order('sort_order')
-    .limit(6)
+  const [{ data: featured }, flatFeeCents] = await Promise.all([
+    supabase
+      .from('application_types')
+      .select('slug, form_code, name, short_name, summary')
+      .eq('is_active', true)
+      .order('sort_order')
+      .limit(6),
+    getFlatFeeCents(supabase),
+  ])
 
   return (
     <>
@@ -101,6 +106,41 @@ export default async function HomePage() {
         </Link>
       </section>
 
+      <section className="container-page py-16">
+        <h2 className="text-2xl font-bold sm:text-3xl">Everything you need in one place</h2>
+        <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="card">
+            <span className="text-2xl">📝</span>
+            <h3 className="mt-4 font-heading font-semibold">Guided Application Preparation</h3>
+            <p className="mt-2 text-sm text-ink-600">Answer simple questions instead of struggling through complicated immigration forms.</p>
+          </div>
+          <div className="card">
+            <span className="text-2xl">📋</span>
+            <h3 className="mt-4 font-heading font-semibold">Personalized Document Checklist</h3>
+            <p className="mt-2 text-sm text-ink-600">Know which supporting documents you need based on your application.</p>
+          </div>
+          <div className="card">
+            <span className="text-2xl">✅</span>
+            <h3 className="mt-4 font-heading font-semibold">Application Review</h3>
+            <p className="mt-2 text-sm text-ink-600">Smart checks help identify missing information before you prepare your filing package.</p>
+          </div>
+          <div className="card">
+            <span className="text-2xl">🌐</span>
+            <h3 className="mt-4 font-heading font-semibold">Certified Document Translation</h3>
+            <p className="mt-2 text-sm text-ink-600">
+              Have documents that aren&apos;t in English? Get all required supporting documents for your
+              application professionally translated into English.
+            </p>
+            <p className="mt-2 text-sm font-semibold text-harbor-700">
+              One flat fee — {formatCents(flatFeeCents)}. No per-document translation charges.
+            </p>
+            <Link href="/faq#translation" className="mt-3 inline-block text-sm font-semibold text-harbor-700 hover:text-harbor-900">
+              Learn About Translation →
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {featured && featured.length > 0 && (
         <section className="bg-harbor-50/60 py-16">
           <div className="container-page">
@@ -117,6 +157,42 @@ export default async function HomePage() {
           </div>
         </section>
       )}
+
+      <section className="border-t border-ink-100 bg-harbor-900 py-16 text-white">
+        <div className="container-page grid gap-10 lg:grid-cols-2 lg:items-center">
+          <div>
+            <span className="badge-neutral bg-harbor-800 text-harbor-100">Certified translation</span>
+            <h2 className="mt-4 text-2xl font-bold sm:text-3xl">Documents not in English? We&apos;ve got that covered.</h2>
+            <p className="mt-4 text-harbor-100">
+              Immigration applications often require supporting documents to be submitted with
+              English translations. With the Smart USA Visa Certified Document Translation
+              Package, you can submit all required non-English supporting documents for your
+              application for professional English translation.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/find-my-application" className="btn-primary text-base">Start My Application</Link>
+              <Link href="/faq#translation" className="btn-outline border-white text-white hover:bg-white hover:text-harbor-900">Learn More</Link>
+            </div>
+            <p className="mt-6 text-xs text-harbor-200">
+              Coverage applies to required documents for your current Smart USA Visa application
+              and is subject to the translation service terms.
+            </p>
+          </div>
+          <div className="card text-ink-900">
+            <p className="text-sm font-semibold text-ink-500">Certified Document Translation Package</p>
+            <p className="mt-2 font-heading text-4xl font-bold">{formatCents(flatFeeCents)} <span className="text-base font-medium text-ink-500">flat fee</span></p>
+            <p className="mt-1 text-sm text-ink-600">All required translations for one Smart USA Visa application.</p>
+            <p className="mt-4 text-sm font-semibold text-ink-800">Examples may include:</p>
+            <ul className="mt-2 space-y-1 text-sm text-ink-700">
+              {['Birth certificates', 'Marriage certificates', 'Divorce certificates', 'Police certificates', 'Civil records', 'Other required supporting documents'].map((item) => (
+                <li key={item} className="flex items-start gap-2">
+                  <span className="mt-0.5 text-success-600">✓</span>{item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
 
       <section className="container-page py-16">
         <h2 className="text-2xl font-bold sm:text-3xl">How Smart USA Visa works</h2>

@@ -7,13 +7,9 @@ import { sendTranslationReadyEmail } from '@/lib/email'
 export async function POST(request: Request, { params }: { params: { id: string } }) {
   const { supabase, user } = await requireStaff()
 
-  const { data: translation, error } = await supabase
-    .from('translations')
-    .select('*, application_documents!inner(application_id)')
-    .eq('id', params.id)
-    .single()
+  const { data: translation, error } = await supabase.from('translations').select('*').eq('id', params.id).single()
   if (error || !translation) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  const applicationId = translation.application_documents.application_id
+  const applicationId = translation.application_id
 
   const formData = await request.formData()
   const translatedFile = formData.get('translatedFile')

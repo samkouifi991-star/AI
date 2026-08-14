@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { getAccessibleApplication, AccessDeniedError } from '@/lib/applications'
 import { getApplicationSummary } from '@/lib/engine/summary'
+import { packageStatusLabel } from '@/lib/engine/translation-package'
 
 export default async function ApplicationHubPage({ params }: { params: { id: string } }) {
   let accessible
@@ -29,7 +30,7 @@ export default async function ApplicationHubPage({ params }: { params: { id: str
     },
     {
       title: 'Translation',
-      body: summary.translationsInProgress > 0 ? `${summary.translationsInProgress} document${summary.translationsInProgress === 1 ? '' : 's'} being translated` : 'None requested',
+      body: packageStatusLabel[summary.translationPackageStatus],
       href: `/application/${application.id}/translations`,
       cta: 'View translations',
     },

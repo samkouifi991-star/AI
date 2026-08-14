@@ -115,6 +115,25 @@ export async function updateGovernmentFee(formData: FormData) {
   revalidatePath('/pricing')
 }
 
+export async function updateTranslationPricing(formData: FormData) {
+  const { supabase, user } = await requireAdmin()
+  const flatFeeCents = Math.round(Number(formData.get('flat_fee') ?? 0) * 100)
+  const { data: existing } = await supabase.from('translation_pricing').select('id').limit(1).maybeSingle()
+
+  if (existing) {
+    const { error } = await supabase.from('translation_pricing').update({ flat_fee_cents: flatFeeCents, updated_at: new Date().toISOString() }).eq('id', existing.id)
+    if (error) throw error
+  } else {
+    const { error } = await supabase.from('translation_pricing').insert({ flat_fee_cents: flatFeeCents })
+    if (error) throw error
+  }
+
+  await logAudit({ actorId: user.id, action: 'admin.translation_pricing.updated', entityType: 'translation_pricing', metadata: { flatFeeCents } })
+  revalidatePath('/admin/pricing')
+  revalidatePath('/pricing')
+  revalidatePath('/')
+}
+
 export async function updateSupportRequestStatus(formData: FormData) {
   const { supabase, user } = await requireStaff()
   const id = String(formData.get('id'))
@@ -125,12 +144,20 @@ export async function updateSupportRequestStatus(formData: FormData) {
   revalidatePath('/admin/support')
 }
 
-export async function updateTranslationStatus(formData: FormData) {
+export async function updateTranslationJob(formData: FormData) {
   const { supabase, user } = await requireStaff()
   const id = String(formData.get('id'))
-  const status = String(formData.get('status'))
-  const { error } = await supabase.from('translations').update({ status }).eq('id', id)
+  const packageId = String(formData.get('package_id') ?? '')
+  const status = String(formData.get('status') ?? '')
+  const providerName = String(formData.get('provider_name') ?? '').trim()
+
+  const updates: Record<string, string | null> = {}
+  if (status) updates.status = status
+  if (formData.has('provider_name')) updates.provider_name = providerName || null
+
+  const { error } = await supabase.from('translations').update(updates).eq('id', id)
   if (error) throw error
-  await logAudit({ actorId: user.id, action: 'admin.translation.status_updated', entityType: 'translation', entityId: id, metadata: { status } })
+  await logAudit({ actorId: user.id, action: 'admin.translation.updated', entityType: 'translation', entityId: id, metadata: updates })
   revalidatePath('/admin/translations')
+  if (packageId) revalidatePath(`/admin/translations/${packageId}`)
 }

@@ -1,16 +1,36 @@
 import { requireStaff } from '@/lib/admin'
-import { updatePricing } from '@/app/actions/admin'
+import { updatePricing, updateTranslationPricing } from '@/app/actions/admin'
 
 export default async function AdminPricingPage() {
   const { supabase, profile } = await requireStaff()
   const { data: applicationTypes } = await supabase.from('application_types').select('id, form_code, name').order('sort_order')
   const { data: pricingRows } = await supabase.from('pricing').select('*')
+  const { data: translationPricing } = await supabase.from('translation_pricing').select('*').limit(1).maybeSingle()
   const canEdit = profile.role === 'admin'
 
   return (
     <div>
       <h1 className="text-2xl font-bold">Pricing</h1>
       <p className="mt-1 text-ink-600">The Smart USA Visa preparation fee, promo pricing, and print &amp; mail add-on — per application. Changes apply site-wide immediately.</p>
+
+      <div className="card mt-6">
+        <h2 className="font-heading font-semibold">Optional Add-Ons</h2>
+        <form action={updateTranslationPricing} className="mt-4 flex flex-wrap items-end gap-3">
+          <div>
+            <label className="field-label">Certified Document Translation Package — flat fee ($)</label>
+            <input
+              type="number"
+              step="0.01"
+              name="flat_fee"
+              defaultValue={((translationPricing?.flat_fee_cents ?? 7500) / 100).toFixed(2)}
+              className="field-input w-40"
+              disabled={!canEdit}
+            />
+            <p className="field-help">One flat fee per application — covers every required document that needs translation, never charged per document.</p>
+          </div>
+          {canEdit && <button type="submit" className="btn-primary">Save</button>}
+        </form>
+      </div>
 
       <div className="mt-6 space-y-4">
         {(applicationTypes ?? []).map((app) => {

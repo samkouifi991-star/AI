@@ -61,6 +61,9 @@ export function SiteNav() {
           <Link href="/resources" className="rounded-lg px-3 py-2 text-sm font-medium text-ink-700 hover:bg-ink-50">
             Resources
           </Link>
+          <Link href="/faq" className="rounded-lg px-3 py-2 text-sm font-medium text-ink-700 hover:bg-ink-50">
+            FAQ
+          </Link>
         </nav>
 
         <div className="hidden items-center gap-3 lg:flex">
@@ -94,6 +97,7 @@ export function SiteNav() {
             <Link href="/how-it-works" className="rounded-lg px-3 py-2.5 text-ink-700 hover:bg-ink-50">How It Works</Link>
             <Link href="/pricing" className="rounded-lg px-3 py-2.5 text-ink-700 hover:bg-ink-50">Pricing</Link>
             <Link href="/resources" className="rounded-lg px-3 py-2.5 text-ink-700 hover:bg-ink-50">Resources</Link>
+            <Link href="/faq" className="rounded-lg px-3 py-2.5 text-ink-700 hover:bg-ink-50">FAQ</Link>
             <Link href="/sign-in" className="rounded-lg px-3 py-2.5 text-ink-700 hover:bg-ink-50">Sign In</Link>
             <Link href="/find-my-application" className="btn-primary mt-2 justify-center">Start My Application</Link>
           </div>

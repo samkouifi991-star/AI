@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getAccessibleApplication, AccessDeniedError } from '@/lib/applications'
 import { checkoutSchema } from '@/lib/validation-schemas'
 import { getPricingForApplicationType, effectiveServiceFeeCents } from '@/lib/engine/pricing'
+import { getPackageForApplication } from '@/lib/engine/translation-package'
 import { getStripe } from '@/lib/stripe'
 import { rateLimit, clientKeyFromRequest } from '@/lib/rate-limit'
 
@@ -48,12 +49,31 @@ export async function POST(request: Request, { params }: { params: { id: string 
     })
   }
 
+  // The translation package is a single line item here — never one per
+  // document — and only appears once (pending payment); a second checkout
+  // attempt after it's already paid won't add it again.
+  const translationPackage = await getPackageForApplication(supabase, application.id)
+  if (translationPackage && translationPackage.payment_status === 'pending') {
+    lineItems.push({
+      price_data: {
+        currency: 'usd',
+        product_data: { name: 'Certified Document Translation Package' },
+        unit_amount: translationPackage.price_cents,
+      },
+      quantity: 1,
+    })
+  }
+
   const origin = new URL(request.url).origin
   const stripe = getStripe()
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
     line_items: lineItems,
-    metadata: { type: 'application', applicationId: application.id },
+    metadata: {
+      type: 'application',
+      applicationId: application.id,
+      translationPackageId: translationPackage?.payment_status === 'pending' ? translationPackage.id : '',
+    },
     success_url: `${origin}/application/${application.id}/package?paid=1`,
     cancel_url: `${origin}/application/${application.id}/checkout?cancelled=1`,
   })

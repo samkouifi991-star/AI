@@ -36,6 +36,20 @@ export async function POST(request: Request) {
       await admin.from('applications').update({ status: 'paid' }).eq('id', applicationId)
       await logAudit({ action: 'payment.succeeded', entityType: 'application', entityId: applicationId })
 
+      const translationPackageId = session.metadata?.translationPackageId
+      if (translationPackageId) {
+        await admin
+          .from('application_translation_packages')
+          .update({
+            payment_status: 'paid',
+            purchased_at: new Date().toISOString(),
+            stripe_checkout_session_id: session.id,
+            stripe_payment_intent_id: String(session.payment_intent ?? ''),
+          })
+          .eq('id', translationPackageId)
+        await logAudit({ action: 'translation_package.paid', entityType: 'application_translation_package', entityId: translationPackageId })
+      }
+
       try {
         await generatePackage(applicationId)
         await logAudit({ action: 'package.generated', entityType: 'application', entityId: applicationId })
@@ -55,14 +69,6 @@ export async function POST(request: Request) {
       }
     }
 
-    if (type === 'translation') {
-      const translationId = session.metadata!.translationId
-      await admin
-        .from('translations')
-        .update({ status: 'in_progress', stripe_payment_intent_id: String(session.payment_intent ?? '') })
-        .eq('id', translationId)
-      await logAudit({ action: 'translation.paid', entityType: 'translation', entityId: translationId })
-    }
   }
 
   return NextResponse.json({ received: true })

@@ -155,22 +155,53 @@ export interface ApplicationDocument {
 }
 
 export type TranslationStatus =
-  | 'requested'
-  | 'awaiting_payment'
+  | 'required'
+  | 'awaiting_upload'
+  | 'submitted'
   | 'in_progress'
   | 'completed'
-  | 'delivered'
+  | 'needs_attention'
+
+export type TranslationPackagePaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded'
+// Derived, customer/admin-facing summary of a package — computed from
+// payment_status plus the state of its child translation jobs, never
+// stored redundantly.
+export type TranslationPackageDisplayStatus =
+  | 'not_purchased'
+  | 'added_to_checkout'
+  | 'in_progress'
+  | 'partially_completed'
+  | 'completed'
+
+export interface TranslationPackage {
+  id: string
+  application_id: string
+  user_id: string | null
+  price_cents: number
+  payment_status: TranslationPackagePaymentStatus
+  stripe_checkout_session_id: string | null
+  stripe_payment_intent_id: string | null
+  purchased_at: string | null
+  created_at: string
+  updated_at: string
+}
 
 export interface Translation {
   id: string
   application_document_id: string
+  application_id: string
+  translation_package_id: string | null
+  document_label: string | null
   source_language: string
-  price_cents: number
+  price_cents: number | null
   status: TranslationStatus
+  self_provided: boolean
   provider_name: string | null
+  assigned_translator_id: string | null
   translated_storage_path: string | null
   certification_storage_path: string | null
   created_at: string
+  updated_at: string
 }
 
 export interface GovernmentFee {
