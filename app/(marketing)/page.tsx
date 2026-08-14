@@ -162,7 +162,7 @@ export default async function HomePage() {
         <div className="container-page grid gap-10 lg:grid-cols-2 lg:items-center">
           <div>
             <span className="badge-neutral bg-harbor-800 text-harbor-100">Certified translation</span>
-            <h2 className="mt-4 text-2xl font-bold sm:text-3xl">Documents not in English? We&apos;ve got that covered.</h2>
+            <h2 className="mt-4 text-2xl font-bold text-white sm:text-3xl">Documents not in English? We&apos;ve got that covered.</h2>
             <p className="mt-4 text-harbor-100">
               Immigration applications often require supporting documents to be submitted with
               English translations. With the Smart USA Visa Certified Document Translation
@@ -171,7 +171,12 @@ export default async function HomePage() {
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <Link href="/find-my-application" className="btn-primary text-base">Start My Application</Link>
-              <Link href="/faq#translation" className="btn-outline border-white text-white hover:bg-white hover:text-harbor-900">Learn More</Link>
+              <Link
+                href="/faq#translation"
+                className="btn-outline border-2 border-white bg-transparent text-white hover:bg-white hover:text-harbor-900 focus-visible:ring-offset-harbor-900"
+              >
+                Learn More
+              </Link>
             </div>
             <p className="mt-6 text-xs text-harbor-200">
               Coverage applies to required documents for your current Smart USA Visa application
