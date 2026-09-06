@@ -295,7 +295,17 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
         .select()
         .single();
 
-      if (error) return { result: 'Failed to book appointment.' };
+      if (error) {
+        // Unique violation on (business_id, scheduled_at) means someone
+        // else's booking landed on this exact slot first — a real DB-level
+        // race, not a generic failure, so say so honestly rather than a
+        // one-size "failed to book" message that would send the caller
+        // back to a time that's already gone.
+        if (error.code === '23505') {
+          return { result: "That time was just booked by someone else — could we look at a different time?" };
+        }
+        return { result: 'Failed to book appointment.' };
+      }
 
       if (params.phone) {
         if (ctx.mode === 'live') {
