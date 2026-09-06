@@ -442,25 +442,6 @@ async function dispatchToolInner(name: string, params: any, ctx: DispatchContext
         return { result: "I'm not able to take orders over the phone right now — let me have someone assist you." };
       }
 
-      let order = await getActiveOrder(supabase, ctx);
-
-      if (!order) {
-        const { data: newOrder, error: createError } = await supabase
-          .from('orders')
-          .insert({
-            business_id: businessId,
-            call_id: ctx.mode === 'live' ? ctx.callId : null,
-            is_practice: ctx.mode === 'practice',
-            practice_session_id: ctx.mode === 'practice' ? ctx.practiceSessionId : null,
-            order_type: params.order_type === 'delivery' ? 'delivery' : 'pickup',
-            status: 'draft'
-          })
-          .select()
-          .single();
-        if (createError || !newOrder) return { result: 'Could not start the order.' };
-        order = newOrder;
-      }
-
       const { data: menuItem } = await supabase
         .from('menu_items')
         .select('id, name, base_price, sold_out, menu_item_sizes(label, price)')
@@ -491,20 +472,19 @@ async function dispatchToolInner(name: string, params: any, ctx: DispatchContext
 
       const line_total = lineTotal(itemInput);
 
-      // Idempotency: the model can re-invoke add_order_item for the exact
-      // same logical item (it didn't register its own prior success, or a
-      // tool-call event got redelivered) — that must not double the item.
-      // Voice function-calling doesn't hand back a stable id the model
-      // then reliably resends unchanged, so the key is derived from the
-      // request's own content plus a coarse time bucket: narrow enough
-      // that a customer genuinely re-ordering the same item minutes later
-      // gets a new key, wide enough to catch a rapid re-ask of the same
-      // request moments after the first one.
+      // Idempotency key: derived from the call/session (stable and known
+      // up front — unlike order.id, which may not exist yet the first
+      // time this runs) plus the request's own content and a coarse time
+      // bucket. The model can re-invoke add_order_item for the exact same
+      // logical item (it didn't register its own prior success, or a
+      // tool-call event got redelivered) — narrow enough that a customer
+      // genuinely re-ordering the same item minutes later gets a new key,
+      // wide enough to catch a rapid re-ask moments after the first one.
       const timeBucket = Math.floor(Date.now() / 5000);
       const clientRequestId = createHash('sha256')
         .update(
           JSON.stringify({
-            order: order.id,
+            session: ctx.mode === 'live' ? ctx.callId : ctx.practiceSessionId,
             menuItemId: itemInput.menu_item_id,
             size: itemInput.size_label,
             qty: itemInput.quantity,
@@ -515,30 +495,33 @@ async function dispatchToolInner(name: string, params: any, ctx: DispatchContext
         )
         .digest('hex');
 
-      const { error: itemInsertError } = await supabase.from('order_items').insert({
-        order_id: order.id,
-        menu_item_id: itemInput.menu_item_id,
-        name_snapshot: itemInput.name_snapshot,
-        size_label: itemInput.size_label,
-        unit_price: itemInput.unit_price,
-        quantity: itemInput.quantity,
-        modifiers: itemInput.modifiers,
-        special_instructions: itemInput.special_instructions,
-        line_total,
-        client_request_id: clientRequestId
+      // Find-or-create the order, insert the item, and recompute the
+      // running subtotal as one atomic database transaction (migration
+      // 0028) — a partial order (created but with no items because the
+      // process died in between two separate round trips) is now
+      // structurally impossible, and the row lock inside the function
+      // stops two concurrent calls for the same order from each creating
+      // their own draft order.
+      const { data: txResult, error: txError } = await supabase.rpc('add_order_item_tx', {
+        p_business_id: businessId,
+        p_call_id: ctx.mode === 'live' ? ctx.callId ?? null : null,
+        p_practice_session_id: ctx.mode === 'practice' ? ctx.practiceSessionId ?? null : null,
+        p_is_practice: ctx.mode === 'practice',
+        p_order_type: params.order_type === 'delivery' ? 'delivery' : 'pickup',
+        p_menu_item_id: itemInput.menu_item_id,
+        p_name_snapshot: itemInput.name_snapshot,
+        p_size_label: itemInput.size_label,
+        p_unit_price: itemInput.unit_price,
+        p_quantity: itemInput.quantity,
+        p_modifiers: itemInput.modifiers,
+        p_special_instructions: itemInput.special_instructions,
+        p_line_total: line_total,
+        p_client_request_id: clientRequestId
       });
 
-      if (itemInsertError) {
-        // Unique violation on (order_id, client_request_id) means this
-        // exact item was already added moments ago — the retry case this
-        // is designed for, not a real failure, so report it the same way
-        // the original successful add did.
-        if (itemInsertError.code === '23505') {
-          return { result: 'item_added', order_id: order.id, item: itemInput.name_snapshot, line_total };
-        }
-        return { result: 'Could not add that item.' };
-      }
-      return { result: 'item_added', order_id: order.id, item: itemInput.name_snapshot, line_total };
+      if (txError || !txResult?.[0]) return { result: 'Could not add that item.' };
+
+      return { result: 'item_added', order_id: txResult[0].order_id, item: itemInput.name_snapshot, line_total };
     }
 
     case 'remove_order_item': {
