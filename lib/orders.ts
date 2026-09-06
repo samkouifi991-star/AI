@@ -75,6 +75,19 @@ export function computeOrderTotals(params: {
  * Creates a Stripe Checkout session for a finalized order and stores the
  * session id on the order row. Used by the confirm_order function in the
  * Vapi webhook — the resulting URL is what gets texted to the customer.
+ *
+ * Idempotent by construction, not just by convention — a retried
+ * confirm_order (a webhook redelivery, or the model re-invoking the tool
+ * after not hearing its own result) must never produce a second Checkout
+ * session, and therefore a second "pay here" text, for the same order:
+ *   1. If the order already has a session that's still open, reuse it —
+ *      no Stripe call at all.
+ *   2. Otherwise, create one with a Stripe Idempotency-Key scoped to this
+ *      order AND to whatever session (if any) it's replacing. Two racing
+ *      calls that both miss guard #1 read the same prior-session value and
+ *      so land on the same key, meaning Stripe itself collapses them into
+ *      one session rather than two — this holds even if the DB read in
+ *      guard #1 and the DB write below race each other.
  */
 export async function createOrderPaymentLink(orderId: string): Promise<{ url: string } | { error: string }> {
   const supabase = supabaseServiceRole();
@@ -82,31 +95,50 @@ export async function createOrderPaymentLink(orderId: string): Promise<{ url: st
   const { data: order, error } = await supabase.from('orders').select('*, businesses(name)').eq('id', orderId).single();
   if (error || !order) return { error: 'Order not found' };
 
-  try {
-    const stripe = stripeClient();
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  const stripe = stripeClient();
 
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      payment_method_types: ['card'],
-      line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            product_data: { name: `Order from ${(order as any).businesses?.name ?? 'restaurant'}` },
-            unit_amount: Math.round(order.total * 100)
-          },
-          quantity: 1
-        }
-      ],
-      metadata: {
-        businessId: order.business_id,
-        referenceId: order.id,
-        referenceType: 'order'
+  if (order.stripe_checkout_session_id) {
+    try {
+      const existing = await stripe.checkout.sessions.retrieve(order.stripe_checkout_session_id);
+      if (existing.status === 'open' && existing.url) {
+        return { url: existing.url };
+      }
+      // Expired or already completed — fall through and mint a fresh one.
+    } catch (err: any) {
+      logger.warn('order_payment_link_retrieve_failed', { orderId, message: err.message });
+      // Couldn't confirm the old session either way — fall through rather
+      // than leaving the order stuck with no way to pay.
+    }
+  }
+
+  try {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+    const idempotencyKey = `order_payment_link:${orderId}:${order.stripe_checkout_session_id ?? 'none'}`;
+
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: 'payment',
+        payment_method_types: ['card'],
+        line_items: [
+          {
+            price_data: {
+              currency: 'usd',
+              product_data: { name: `Order from ${(order as any).businesses?.name ?? 'restaurant'}` },
+              unit_amount: Math.round(order.total * 100)
+            },
+            quantity: 1
+          }
+        ],
+        metadata: {
+          businessId: order.business_id,
+          referenceId: order.id,
+          referenceType: 'order'
+        },
+        success_url: `${appUrl}/pay/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${appUrl}/pay/cancelled`
       },
-      success_url: `${appUrl}/pay/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appUrl}/pay/cancelled`
-    });
+      { idempotencyKey }
+    );
 
     await supabase
       .from('orders')

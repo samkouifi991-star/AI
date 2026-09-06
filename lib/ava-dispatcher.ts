@@ -7,6 +7,7 @@ import { detectLanguage, translateText, SUPPORTED_LANGUAGES } from './language';
 import { computeOrderTotals, createOrderPaymentLink, releaseExpiredHolds, lineTotal, OrderItemInput } from './orders';
 import { recordKnowledgeGap, isHumanHandoffRequest } from './knowledge-gaps';
 import { groupBusinessHours, computeOpenStatus, formatTime12h, DAY_NAMES } from './hours';
+import { logger } from './logger';
 
 /**
  * The single implementation of every tool Ava can call, shared between a
@@ -543,12 +544,23 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
         return { result: "I've got your order, but I'm having trouble generating the payment link — someone from the restaurant will follow up." };
       }
 
+      // Never claim the text went out until Twilio actually confirms it —
+      // sendSms()'s result must be checked, not assumed, before Ava says
+      // "I've texted you" (the same discipline book_appointment already
+      // applies to its own confirmation SMS a few cases above).
+      let smsSent = false;
       if (params.customer_phone) {
-        await sendSms(params.customer_phone, `Your order total is $${totals.total.toFixed(2)}. Pay here to confirm: ${link.url}`);
+        const smsResult = await sendSms(params.customer_phone, `Your order total is $${totals.total.toFixed(2)}. Pay here to confirm: ${link.url}`);
+        smsSent = smsResult.ok;
+        if (!smsResult.ok) {
+          logger.error('order_payment_sms_failed', { orderId: order.id, businessId, message: smsResult.error });
+        }
       }
 
       return {
-        result: `Your total is $${totals.total.toFixed(2)}. I've texted you a secure payment link — your order will be sent to the kitchen as soon as payment goes through.`,
+        result: smsSent
+          ? `Your total is $${totals.total.toFixed(2)}. I've texted you a secure payment link — your order will be sent to the kitchen as soon as payment goes through.`
+          : `Your total is $${totals.total.toFixed(2)}. I wasn't able to text you the payment link just now — I'll have the restaurant follow up with it directly, or I can read the link to you if that helps.`,
         payment_url: link.url
       };
     }
