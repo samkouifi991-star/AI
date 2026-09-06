@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { withRetry } from './provider-retry';
 
 let cachedClient: OpenAI | null = null;
 
@@ -18,18 +19,22 @@ export function getOpenAI(): OpenAI {
 }
 
 export async function embedText(text: string): Promise<number[]> {
-  const res = await getOpenAI().embeddings.create({
-    model: 'text-embedding-3-small',
-    input: text.slice(0, 8000) // guard against oversized chunks
-  });
+  const res = await withRetry('openai', 'embed_text', () =>
+    getOpenAI().embeddings.create({
+      model: 'text-embedding-3-small',
+      input: text.slice(0, 8000) // guard against oversized chunks
+    })
+  );
   return res.data[0].embedding;
 }
 
 export async function embedBatch(texts: string[]): Promise<number[][]> {
-  const res = await getOpenAI().embeddings.create({
-    model: 'text-embedding-3-small',
-    input: texts.map((t) => t.slice(0, 8000))
-  });
+  const res = await withRetry('openai', 'embed_batch', () =>
+    getOpenAI().embeddings.create({
+      model: 'text-embedding-3-small',
+      input: texts.map((t) => t.slice(0, 8000))
+    })
+  );
   return res.data.map((d) => d.embedding);
 }
 
@@ -57,22 +62,24 @@ export async function answerFromKnowledge(
   contextChunks: string[]
 ): Promise<{ answer: string; confident: boolean }> {
   const context = contextChunks.map((c, i) => `[${i + 1}] ${c}`).join('\n\n');
-  const completion = await getOpenAI().chat.completions.create({
-    model: 'gpt-4o-mini',
-    temperature: 0.2,
-    messages: [
-      {
-        role: 'system',
-        content:
-          "You are a business's phone receptionist. Answer ONLY using the provided context — never invent " +
-          'prices, policies, or availability. Respond in exactly this format: the first line must be either ' +
-          'the single word CONFIDENT or the single word UNSURE, then a blank line, then your reply to the ' +
-          "customer. Use UNSURE if the provided context does not actually contain the answer — don't guess, " +
-          'and word your reply as not having that information on hand rather than answering anyway.'
-      },
-      { role: 'user', content: `Context:\n${context}\n\nCustomer question: ${question}` }
-    ]
-  });
+  const completion = await withRetry('openai', 'answer_from_knowledge', () =>
+    getOpenAI().chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.2,
+      messages: [
+        {
+          role: 'system',
+          content:
+            "You are a business's phone receptionist. Answer ONLY using the provided context — never invent " +
+            'prices, policies, or availability. Respond in exactly this format: the first line must be either ' +
+            'the single word CONFIDENT or the single word UNSURE, then a blank line, then your reply to the ' +
+            "customer. Use UNSURE if the provided context does not actually contain the answer — don't guess, " +
+            'and word your reply as not having that information on hand rather than answering anyway.'
+        },
+        { role: 'user', content: `Context:\n${context}\n\nCustomer question: ${question}` }
+      ]
+    })
+  );
 
   const raw = completion.choices[0].message.content ?? '';
   const match = raw.match(/^\s*(CONFIDENT|UNSURE)\s*\n+([\s\S]*)$/i);

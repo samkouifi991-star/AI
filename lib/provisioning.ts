@@ -10,6 +10,7 @@ import { createAssistant, importTwilioNumberToVapi, deleteVapiPhoneNumber, delet
 import { buildSystemPrompt } from './vapi-tools';
 import { decryptSecret, encryptSecret } from './crypto';
 import { logger } from './logger';
+import { withRetry } from './provider-retry';
 
 type StepName =
   | 'verify_subscription'
@@ -330,9 +331,11 @@ export async function runBuyNumberWorkflow(params: {
 
   // Step 12: connection test — confirm Vapi actually has the number linked
   try {
-    const res = await fetch(`https://api.vapi.ai/phone-number/${imported.vapiPhoneNumberId}`, {
-      headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` }
-    });
+    const res = await withRetry('vapi', 'connection_test', () =>
+      fetch(`https://api.vapi.ai/phone-number/${imported.vapiPhoneNumberId}`, {
+        headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` }
+      })
+    );
     if (!res.ok) return fail(ctx, 'run_connection_test', `Vapi could not confirm the number: ${res.status}`);
   } catch (err: any) {
     return fail(ctx, 'run_connection_test', err.message ?? 'Connection test failed');
@@ -523,9 +526,11 @@ export async function runImportByoNumberWorkflow(params: {
   await recordStep(ctx, 'save_provider_ids', true, phoneRow.id);
 
   try {
-    const res = await fetch(`https://api.vapi.ai/phone-number/${imported.vapiPhoneNumberId}`, {
-      headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` }
-    });
+    const res = await withRetry('vapi', 'connection_test', () =>
+      fetch(`https://api.vapi.ai/phone-number/${imported.vapiPhoneNumberId}`, {
+        headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` }
+      })
+    );
     if (!res.ok) return fail(ctx, 'run_connection_test', `Vapi could not confirm the number: ${res.status}`);
   } catch (err: any) {
     return fail(ctx, 'run_connection_test', err.message ?? 'Connection test failed');

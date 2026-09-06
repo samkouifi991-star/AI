@@ -1,6 +1,7 @@
 import twilio from 'twilio';
 import { logger } from './logger';
 import { decryptSecret } from './crypto';
+import { withRetry } from './provider-retry';
 
 export function twilioClient() {
   if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
@@ -240,7 +241,14 @@ export async function sendSms(to: string, body: string): Promise<{ ok: boolean; 
   }
   try {
     const client = twilioClient();
-    await client.messages.create({ to, from: process.env.TWILIO_PHONE_NUMBER, body });
+    // Known limitation: a retry here is only triggered when the request
+    // never got a response (network error/timeout) or Twilio itself
+    // returned 429/5xx — not on a real send failure — but if the message
+    // actually reached Twilio and only the response was lost in transit,
+    // a retry could still send a duplicate text. Fully closing that would
+    // need Twilio's own request-level idempotency support wired in; this
+    // is the bounded-retry half of that, not the whole guarantee.
+    await withRetry('twilio', 'send_sms', () => client.messages.create({ to, from: process.env.TWILIO_PHONE_NUMBER, body }));
     return { ok: true };
   } catch (err: any) {
     logger.error('twilio_sms_send_failed', { to, message: err.message });

@@ -1,6 +1,7 @@
 import { supabaseServiceRole } from './supabase/admin';
 import { stripeClient } from './stripe';
 import { logger } from './logger';
+import { withRetry } from './provider-retry';
 
 export interface OrderItemInput {
   menu_item_id: string;
@@ -99,7 +100,7 @@ export async function createOrderPaymentLink(orderId: string): Promise<{ url: st
 
   if (order.stripe_checkout_session_id) {
     try {
-      const existing = await stripe.checkout.sessions.retrieve(order.stripe_checkout_session_id);
+      const existing = await withRetry('stripe', 'checkout_session_retrieve', () => stripe.checkout.sessions.retrieve(order.stripe_checkout_session_id));
       if (existing.status === 'open' && existing.url) {
         return { url: existing.url };
       }
@@ -115,29 +116,34 @@ export async function createOrderPaymentLink(orderId: string): Promise<{ url: st
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
     const idempotencyKey = `order_payment_link:${orderId}:${order.stripe_checkout_session_id ?? 'none'}`;
 
-    const session = await stripe.checkout.sessions.create(
-      {
-        mode: 'payment',
-        payment_method_types: ['card'],
-        line_items: [
-          {
-            price_data: {
-              currency: 'usd',
-              product_data: { name: `Order from ${(order as any).businesses?.name ?? 'restaurant'}` },
-              unit_amount: Math.round(order.total * 100)
-            },
-            quantity: 1
-          }
-        ],
-        metadata: {
-          businessId: order.business_id,
-          referenceId: order.id,
-          referenceType: 'order'
+    // Safe to retry under load — a retry reuses idempotencyKey, so Stripe
+    // itself collapses it with the original attempt rather than minting a
+    // second session.
+    const session = await withRetry('stripe', 'checkout_session_create', () =>
+      stripe.checkout.sessions.create(
+        {
+          mode: 'payment',
+          payment_method_types: ['card'],
+          line_items: [
+            {
+              price_data: {
+                currency: 'usd',
+                product_data: { name: `Order from ${(order as any).businesses?.name ?? 'restaurant'}` },
+                unit_amount: Math.round(order.total * 100)
+              },
+              quantity: 1
+            }
+          ],
+          metadata: {
+            businessId: order.business_id,
+            referenceId: order.id,
+            referenceType: 'order'
+          },
+          success_url: `${appUrl}/pay/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${appUrl}/pay/cancelled`
         },
-        success_url: `${appUrl}/pay/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${appUrl}/pay/cancelled`
-      },
-      { idempotencyKey }
+        { idempotencyKey }
+      )
     );
 
     await supabase
