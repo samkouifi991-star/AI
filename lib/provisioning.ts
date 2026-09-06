@@ -11,6 +11,7 @@ import { buildSystemPrompt } from './vapi-tools';
 import { decryptSecret, encryptSecret } from './crypto';
 import { logger } from './logger';
 import { withRetry } from './provider-retry';
+import { enqueueFailedEvent } from './dead-letter-queue';
 
 type StepName =
   | 'verify_subscription'
@@ -350,6 +351,12 @@ export async function runBuyNumberWorkflow(params: {
   const sync = await syncAssistantSettings(params.businessId);
   if (sync.status !== 'synced') {
     logger.warn('provisioning_post_create_sync_incomplete', { businessId: params.businessId, status: sync.status, error: sync.error });
+    await enqueueFailedEvent({
+      eventType: 'retry_assistant_sync',
+      businessId: params.businessId,
+      payload: { businessId: params.businessId },
+      errorMessage: sync.error ?? `sync status: ${sync.status}`
+    });
   }
 
   await supabase
@@ -541,6 +548,12 @@ export async function runImportByoNumberWorkflow(params: {
   const sync = await syncAssistantSettings(params.businessId);
   if (sync.status !== 'synced') {
     logger.warn('provisioning_post_create_sync_incomplete', { businessId: params.businessId, status: sync.status, error: sync.error });
+    await enqueueFailedEvent({
+      eventType: 'retry_assistant_sync',
+      businessId: params.businessId,
+      payload: { businessId: params.businessId },
+      errorMessage: sync.error ?? `sync status: ${sync.status}`
+    });
   }
 
   await supabase

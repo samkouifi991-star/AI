@@ -11,6 +11,7 @@ import { groupBusinessHours, computeOpenStatus, formatTime12h, DAY_NAMES } from 
 import { logger } from './logger';
 import { getOrCreateCallConfigSnapshot, type CallConfigSnapshot } from './call-config-snapshot';
 import { handleUnsafeAction } from './human-fallback';
+import { enqueueFailedEvent } from './dead-letter-queue';
 
 /**
  * The single implementation of every tool Ava can call, shared between a
@@ -356,11 +357,25 @@ async function dispatchToolInner(name: string, params: any, ctx: DispatchContext
 
       if (params.phone) {
         if (ctx.mode === 'live') {
-          const smsResult = await sendSms(
-            params.phone,
-            appointmentConfirmationSms({ businessName: business?.name ?? 'Your service provider', when: params.readable_time ?? params.start_iso, address: params.address })
-          );
-          if (smsResult.ok) await supabase.from('appointments').update({ confirmation_sent: true }).eq('id', appt.id);
+          const confirmationBody = appointmentConfirmationSms({
+            businessName: business?.name ?? 'Your service provider',
+            when: params.readable_time ?? params.start_iso,
+            address: params.address
+          });
+          const smsResult = await sendSms(params.phone, confirmationBody);
+          if (smsResult.ok) {
+            await supabase.from('appointments').update({ confirmation_sent: true }).eq('id', appt.id);
+          } else {
+            // The appointment is still real (item 6) — queue the text for
+            // a background retry rather than leaving the customer with no
+            // confirmation and nobody aware it never went out.
+            await enqueueFailedEvent({
+              eventType: 'resend_sms',
+              businessId,
+              payload: { to: params.phone, body: confirmationBody },
+              errorMessage: smsResult.error
+            });
+          }
         } else {
           suppressedAction = `${suppressedAction ?? ''}; would have texted a confirmation SMS to ${params.phone}`.replace(/^; /, '');
         }
@@ -642,10 +657,17 @@ async function dispatchToolInner(name: string, params: any, ctx: DispatchContext
       // applies to its own confirmation SMS a few cases above).
       let smsSent = false;
       if (params.customer_phone) {
-        const smsResult = await sendSms(params.customer_phone, `Your order total is $${totals.total.toFixed(2)}. Pay here to confirm: ${link.url}`);
+        const paymentSmsBody = `Your order total is $${totals.total.toFixed(2)}. Pay here to confirm: ${link.url}`;
+        const smsResult = await sendSms(params.customer_phone, paymentSmsBody);
         smsSent = smsResult.ok;
         if (!smsResult.ok) {
           logger.error('order_payment_sms_failed', { orderId: order.id, businessId, message: smsResult.error });
+          await enqueueFailedEvent({
+            eventType: 'resend_sms',
+            businessId,
+            payload: { to: params.customer_phone, body: paymentSmsBody },
+            errorMessage: smsResult.error
+          });
         }
       }
 

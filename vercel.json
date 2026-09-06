@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/process-dead-letter-queue",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
