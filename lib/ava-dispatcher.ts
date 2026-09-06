@@ -258,37 +258,25 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
 
       const { data: business } = await supabase.from('businesses').select('name, timezone').eq('id', businessId).single();
 
-      let calendarEventId: string | undefined;
       let suppressedAction: string | undefined;
+      const { data: conn } = ctx.mode === 'live' ? await supabase.from('calendar_connections').select('*').eq('business_id', businessId).single() : { data: null };
 
-      if (ctx.mode === 'live') {
-        const { data: conn } = await supabase.from('calendar_connections').select('*').eq('business_id', businessId).single();
-        if (conn) {
-          const event = await createCalendarEvent({
-            accessToken: conn.access_token,
-            refreshToken: conn.refresh_token,
-            calendarId: conn.calendar_id,
-            summary: `${params.appointment_type ?? 'Estimate visit'} — ${params.name}`,
-            description: params.notes,
-            startIso: params.start_iso,
-            endIso: params.end_iso,
-            timezone: business?.timezone ?? 'America/New_York'
-          });
-          calendarEventId = event.id ?? undefined;
-        }
-      } else {
-        suppressedAction = `would have created a real calendar event for "${params.appointment_type ?? 'Estimate visit'} — ${params.name}" at ${params.readable_time ?? params.start_iso}`;
-      }
-
+      // The database row is the actual thing being promised to the
+      // caller, so it's created FIRST — before the external calendar
+      // event. Creating the calendar event first (the old order) risked a
+      // real Google Calendar event with no corresponding appointments row
+      // if the insert below then failed for any reason, including the
+      // double-booking check in migration 0022 — an orphaned external
+      // side effect nothing in this app could find or reconcile.
       const { data: appt, error } = await supabase
         .from('appointments')
         .insert({
           business_id: businessId,
           lead_id: params.lead_id,
-          calendar_event_id: calendarEventId,
           scheduled_at: params.start_iso,
           appointment_type: params.appointment_type ?? 'estimate_visit',
           status: 'scheduled',
+          calendar_sync_status: ctx.mode === 'live' && conn ? 'pending' : 'not_applicable',
           is_practice: ctx.mode === 'practice',
           practice_session_id: ctx.mode === 'practice' ? ctx.practiceSessionId : null
         })
@@ -305,6 +293,34 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
           return { result: "That time was just booked by someone else — could we look at a different time?" };
         }
         return { result: 'Failed to book appointment.' };
+      }
+
+      // The appointment is real and confirmed at this point regardless of
+      // what happens next — a calendar-sync failure is our own internal
+      // bookkeeping problem, logged for reconciliation, never something
+      // that un-books the customer's slot or changes what Ava tells them.
+      if (ctx.mode === 'live' && conn) {
+        try {
+          const event = await createCalendarEvent({
+            accessToken: conn.access_token,
+            refreshToken: conn.refresh_token,
+            calendarId: conn.calendar_id,
+            summary: `${params.appointment_type ?? 'Estimate visit'} — ${params.name}`,
+            description: params.notes,
+            startIso: params.start_iso,
+            endIso: params.end_iso,
+            timezone: business?.timezone ?? 'America/New_York'
+          });
+          await supabase
+            .from('appointments')
+            .update({ calendar_event_id: event.id ?? null, calendar_sync_status: 'synced' })
+            .eq('id', appt.id);
+        } catch (err: any) {
+          logger.error('appointment_calendar_sync_failed', { appointmentId: appt.id, businessId, message: err.message });
+          await supabase.from('appointments').update({ calendar_sync_status: 'failed' }).eq('id', appt.id);
+        }
+      } else if (ctx.mode !== 'live') {
+        suppressedAction = `would have created a real calendar event for "${params.appointment_type ?? 'Estimate visit'} — ${params.name}" at ${params.readable_time ?? params.start_iso}`;
       }
 
       if (params.phone) {
