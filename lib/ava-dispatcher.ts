@@ -10,6 +10,7 @@ import { recordKnowledgeGap, isHumanHandoffRequest } from './knowledge-gaps';
 import { groupBusinessHours, computeOpenStatus, formatTime12h, DAY_NAMES } from './hours';
 import { logger } from './logger';
 import { getOrCreateCallConfigSnapshot, type CallConfigSnapshot } from './call-config-snapshot';
+import { handleUnsafeAction } from './human-fallback';
 
 /**
  * The single implementation of every tool Ava can call, shared between a
@@ -273,7 +274,8 @@ async function dispatchToolInner(name: string, params: any, ctx: DispatchContext
     }
 
     case 'book_appointment': {
-      const employeeSettings = await getAiEmployeeSettings(ctx);
+      const bookingSnapshot = await getSnapshot(ctx);
+      const employeeSettings = bookingSnapshot.aiEmployeeSettings;
       if (!employeeSettings.can_book_appointments) {
         return { result: "I'm not able to book appointments directly — I'll have someone reach out to schedule." };
       }
@@ -314,7 +316,14 @@ async function dispatchToolInner(name: string, params: any, ctx: DispatchContext
         if (error.code === '23505') {
           return { result: "That time was just booked by someone else — could we look at a different time?" };
         }
-        return { result: 'Failed to book appointment.' };
+        return handleUnsafeAction({
+          businessId,
+          callId: ctx.mode === 'live' ? ctx.callId : null,
+          practiceSessionId: ctx.mode === 'practice' ? ctx.practiceSessionId : null,
+          actionAttempted: 'book_appointment',
+          errorDetail: error.message,
+          transferNumber: bookingSnapshot.transferNumber
+        });
       }
 
       // The appointment is real and confirmed at this point regardless of
@@ -618,7 +627,13 @@ async function dispatchToolInner(name: string, params: any, ctx: DispatchContext
 
       const link = await createOrderPaymentLink(order.id);
       if ('error' in link) {
-        return { result: "I've got your order, but I'm having trouble generating the payment link — someone from the restaurant will follow up." };
+        return handleUnsafeAction({
+          businessId,
+          callId: ctx.callId,
+          actionAttempted: 'create_order_payment_link',
+          errorDetail: link.error,
+          transferNumber: snapshot.transferNumber
+        });
       }
 
       // Never claim the text went out until Twilio actually confirms it —
