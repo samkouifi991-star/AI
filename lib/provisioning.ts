@@ -212,10 +212,18 @@ export async function runBuyNumberWorkflow(params: {
   // Step 1: subscription eligibility
   const { data: business } = await supabase
     .from('businesses')
-    .select('id, name, business_type, service_area, vapi_assistant_id, twilio_subaccount_sid, twilio_subaccount_auth_token_encrypted')
+    .select('id, name, business_type, service_area, vapi_assistant_id, twilio_subaccount_sid, twilio_subaccount_auth_token_encrypted, voice_runtime')
     .eq('id', params.businessId)
     .single();
   if (!business) return fail(ctx, 'verify_subscription', 'Business not found.');
+  if (business.voice_runtime === 'direct') {
+    // The always-running voice worker this runtime needs doesn't exist
+    // yet — provisioning a Vapi assistant/number for a business flagged
+    // 'direct' would silently put it on the wrong runtime rather than
+    // the one it's actually configured for. Fail loudly instead of
+    // faking support that isn't built.
+    return fail(ctx, 'verify_subscription', "This business is set to the 'direct' voice runtime, which isn't available yet.");
+  }
   // NOTE: actual plan-tier gating (Starter/Growth/Pro) hooks in here once
   // the subscription table from the billing module is queryable — this
   // step exists and records real pass/fail, but the specific "does this
@@ -437,10 +445,13 @@ export async function runImportByoNumberWorkflow(params: {
 
   const { data: business } = await supabase
     .from('businesses')
-    .select('id, name, business_type, service_area, vapi_assistant_id')
+    .select('id, name, business_type, service_area, vapi_assistant_id, voice_runtime')
     .eq('id', params.businessId)
     .single();
   if (!business) return fail(ctx, 'verify_subscription', 'Business not found.');
+  if (business.voice_runtime === 'direct') {
+    return fail(ctx, 'verify_subscription', "This business is set to the 'direct' voice runtime, which isn't available yet.");
+  }
   await recordStep(ctx, 'verify_subscription', true);
 
   const client = twilioClientForConnection(params.twilioAccountSid, params.encryptedAuthToken);

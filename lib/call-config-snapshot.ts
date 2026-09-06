@@ -63,9 +63,7 @@ const DEFAULT_VOICE_SETTINGS: VoiceSettingsSnapshot = {
 async function buildSnapshot(supabase: SupabaseClient, businessId: string): Promise<CallConfigSnapshot> {
   const [{ data: business }, { data: employeeSettings }, { data: hoursRows }, { data: specialRows }, { data: voiceSettings }, { data: restaurantSettings }, { data: menuAgg }] =
     await Promise.all([
-      // Note: businesses.voice_runtime doesn't exist yet (added in
-      // Phase 1, item 14) — runtime defaults to 'vapi' below until then.
-      supabase.from('businesses').select('timezone, business_type').eq('id', businessId).maybeSingle(),
+      supabase.from('businesses').select('timezone, business_type, voice_runtime').eq('id', businessId).maybeSingle(),
       supabase
         .from('ai_employee_settings')
         .select('can_take_orders, can_quote_prices, can_book_appointments, can_offer_discounts, escalation_phone_number')
@@ -92,7 +90,7 @@ async function buildSnapshot(supabase: SupabaseClient, businessId: string): Prom
 
   return {
     businessId,
-    runtime: 'vapi',
+    runtime: business?.voice_runtime === 'direct' ? 'direct' : 'vapi',
     timezone: business?.timezone ?? 'America/New_York',
     transferNumber: employeeSettings?.escalation_phone_number ?? process.env.TWILIO_PHONE_NUMBER ?? null,
     aiEmployeeSettings: employeeSettings ?? DEFAULT_AI_EMPLOYEE_SETTINGS,
