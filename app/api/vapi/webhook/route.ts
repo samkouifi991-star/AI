@@ -159,7 +159,7 @@ async function handleFunctionCall(
     return { status: 400, body: { result: 'Missing business context.' } };
   }
 
-  const result = await dispatchTool(name, params, { businessId, mode: 'live', callId: callRowId ?? null });
+  const result = await dispatchTool(name, params, { businessId, mode: 'live', callId: callRowId ?? null, providerCallId: call?.id ?? null });
   return { status: 200, body: result };
 }
 

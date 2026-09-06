@@ -9,6 +9,7 @@ import { computeOrderTotals, createOrderPaymentLink, releaseExpiredHolds, lineTo
 import { recordKnowledgeGap, isHumanHandoffRequest } from './knowledge-gaps';
 import { groupBusinessHours, computeOpenStatus, formatTime12h, DAY_NAMES } from './hours';
 import { logger } from './logger';
+import { getOrCreateCallConfigSnapshot, type CallConfigSnapshot } from './call-config-snapshot';
 
 /**
  * The single implementation of every tool Ava can call, shared between a
@@ -26,44 +27,34 @@ export interface DispatchContext {
   businessId: string;
   mode: DispatchMode;
   callId?: string | null; // live mode: the calls.id this tool call belongs to
+  providerCallId?: string | null; // live mode: the voice provider's own call id (Vapi's call.id) — the call-config snapshot key
   practiceSessionId?: string | null; // practice mode: the practice_sessions.id
 }
 
 type SupabaseClient = ReturnType<typeof supabaseServiceRole>;
 
-async function getAiEmployeeSettings(supabase: SupabaseClient, businessId: string) {
-  const { data } = await supabase
-    .from('ai_employee_settings')
-    .select('can_take_orders, can_quote_prices, can_book_appointments, can_offer_discounts, escalation_phone_number')
-    .eq('business_id', businessId)
-    .maybeSingle();
-
-  return (
-    data ?? {
-      can_take_orders: true,
-      can_quote_prices: true,
-      can_book_appointments: true,
-      can_offer_discounts: false,
-      escalation_phone_number: null as string | null
-    }
-  );
+/**
+ * Every setting a tool call reads that the owner could change from the
+ * dashboard while a call is in progress goes through the call's own
+ * config snapshot (lib/call-config-snapshot.ts, migration 0024) instead
+ * of a live table read — created once, on this call's first tool call,
+ * and reused for the rest of it. A setting changed mid-call takes effect
+ * on the *next* call, never the one already talking to a customer.
+ */
+async function getSnapshot(ctx: DispatchContext): Promise<CallConfigSnapshot> {
+  return getOrCreateCallConfigSnapshot({
+    businessId: ctx.businessId,
+    providerCallId: ctx.mode === 'live' ? ctx.providerCallId : null,
+    practiceSessionId: ctx.mode === 'practice' ? ctx.practiceSessionId : null
+  });
 }
 
-async function getVoiceSettings(supabase: SupabaseClient, businessId: string) {
-  const { data } = await supabase
-    .from('business_voice_settings')
-    .select('default_language, additional_languages, auto_detect_language, confirm_before_switch')
-    .eq('business_id', businessId)
-    .single();
+async function getAiEmployeeSettings(ctx: DispatchContext) {
+  return (await getSnapshot(ctx)).aiEmployeeSettings;
+}
 
-  return (
-    data ?? {
-      default_language: 'en',
-      additional_languages: [] as string[],
-      auto_detect_language: false,
-      confirm_before_switch: true
-    }
-  );
+async function getVoiceSettings(ctx: DispatchContext) {
+  return (await getSnapshot(ctx)).voiceSettings;
 }
 
 /** Looks up the in-progress order for this call/practice session, however it's keyed. */
@@ -97,13 +88,9 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
     }
 
     case 'check_business_hours': {
-      const { data: business } = await supabase.from('businesses').select('timezone').eq('id', businessId).single();
-      const timezone = business?.timezone ?? 'America/New_York';
-      const [{ data: hoursRows }, { data: specialRows }] = await Promise.all([
-        supabase.from('business_hours').select('day_of_week, open_time, close_time, is_closed').eq('business_id', businessId),
-        supabase.from('special_hours').select('date, is_closed, open_time, close_time, note').eq('business_id', businessId)
-      ]);
-      const days = groupBusinessHours(hoursRows ?? []);
+      const snapshot = await getSnapshot(ctx);
+      const timezone = snapshot.timezone;
+      const days = groupBusinessHours(snapshot.businessHours as any);
 
       if (params.day) {
         const dayIndex = DAY_NAMES.findIndex((d) => d.toLowerCase() === String(params.day).toLowerCase());
@@ -113,7 +100,7 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
         return { result: `On ${DAY_NAMES[dayIndex]}s we're open ${dayHours.ranges.map((r) => `${formatTime12h(r.openTime)}–${formatTime12h(r.closeTime)}`).join(', ')}.` };
       }
 
-      const status = computeOpenStatus(new Date(), timezone, days, specialRows ?? []);
+      const status = computeOpenStatus(new Date(), timezone, days, snapshot.specialHours);
       if (status.isOpenNow) {
         return { result: `Yes, we're open right now. Today's hours: ${status.todayHoursLabel}.${status.note ? ` ${status.note}` : ''}` };
       }
@@ -128,7 +115,7 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
     case 'detect_language': {
       if (ctx.mode !== 'live') return { result: 'not_available_in_practice' };
 
-      const voiceSettings = await getVoiceSettings(supabase, businessId);
+      const voiceSettings = await getVoiceSettings(ctx);
       if (!voiceSettings.auto_detect_language) return { result: 'auto_detect_disabled' };
 
       const candidates = [voiceSettings.default_language, ...voiceSettings.additional_languages];
@@ -197,7 +184,7 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
     }
 
     case 'calculate_estimate': {
-      const employeeSettings = await getAiEmployeeSettings(supabase, businessId);
+      const employeeSettings = await getAiEmployeeSettings(ctx);
       if (!employeeSettings.can_quote_prices) {
         return { result: "I'm not able to quote prices over the phone — I'll have the team follow up with a quote." };
       }
@@ -251,7 +238,7 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
     }
 
     case 'book_appointment': {
-      const employeeSettings = await getAiEmployeeSettings(supabase, businessId);
+      const employeeSettings = await getAiEmployeeSettings(ctx);
       if (!employeeSettings.can_book_appointments) {
         return { result: "I'm not able to book appointments directly — I'll have someone reach out to schedule." };
       }
@@ -344,7 +331,7 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
 
     case 'transfer_call': {
       if (ctx.mode !== 'live') {
-        const employeeSettings = await getAiEmployeeSettings(supabase, businessId);
+        const employeeSettings = await getAiEmployeeSettings(ctx);
         const destination = employeeSettings.escalation_phone_number ?? '(no escalation number configured)';
         return {
           result: `Ava would transfer this call to ${destination} — reason: ${params.reason ?? 'not specified'}.`,
@@ -352,7 +339,7 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
         };
       }
 
-      const employeeSettings = await getAiEmployeeSettings(supabase, businessId);
+      const employeeSettings = await getAiEmployeeSettings(ctx);
 
       // Log as a knowledge gap only when this is a real "I was missing
       // information" escalation, not a plain "let me speak to a person"
@@ -391,7 +378,7 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
     }
 
     case 'add_order_item': {
-      const employeeSettings = await getAiEmployeeSettings(supabase, businessId);
+      const employeeSettings = await getAiEmployeeSettings(ctx);
       if (!employeeSettings.can_take_orders) {
         return { result: "I'm not able to take orders over the phone right now — let me have someone assist you." };
       }
@@ -514,15 +501,12 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
     }
 
     case 'get_order_summary': {
-      const employeeSettings = await getAiEmployeeSettings(supabase, businessId);
+      const snapshot = await getSnapshot(ctx);
+      const employeeSettings = snapshot.aiEmployeeSettings;
       const order = await getActiveOrder(supabase, ctx);
       if (!order || !order.order_items?.length) return { result: 'No items in the order yet.' };
 
-      const { data: settings } = await supabase
-        .from('restaurant_settings')
-        .select('tax_rate, delivery_fee, discount_code, discount_percent')
-        .eq('business_id', businessId)
-        .single();
+      const settings = snapshot.restaurantSettings;
 
       const totals = computeOrderTotals({
         items: order.order_items,
@@ -547,17 +531,14 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
     }
 
     case 'confirm_order': {
-      const employeeSettings = await getAiEmployeeSettings(supabase, businessId);
+      const snapshot = await getSnapshot(ctx);
+      const employeeSettings = snapshot.aiEmployeeSettings;
       const order = await getActiveOrder(supabase, ctx);
       if (!order || !order.order_items?.length) return { result: 'There is no order to confirm yet.' };
 
       if (ctx.mode === 'live') await releaseExpiredHolds(businessId);
 
-      const { data: settings } = await supabase
-        .from('restaurant_settings')
-        .select('tax_rate, delivery_fee, discount_code, discount_percent, pay_at_pickup, pay_at_delivery')
-        .eq('business_id', businessId)
-        .single();
+      const settings = snapshot.restaurantSettings;
 
       const totals = computeOrderTotals({
         items: order.order_items,
