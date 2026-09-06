@@ -1,4 +1,9 @@
 import { logger } from './logger';
+import { assertCircuitClosed, recordCircuitFailure, recordCircuitSuccess, CIRCUIT_BREAKER_POLICIES } from './circuit-breaker';
+
+function hasCircuitBreaker(provider: string): provider is keyof typeof CIRCUIT_BREAKER_POLICIES {
+  return provider in CIRCUIT_BREAKER_POLICIES;
+}
 
 export interface RetryPolicy {
   /** How many attempts total, including the first — not "extra" retries. */
@@ -88,11 +93,19 @@ export async function withRetry<T>(
 ): Promise<T> {
   const policy = RETRY_POLICIES[provider];
   const isRetryable = policy.isRetryable ?? isRetryableHttpError;
+  const breakered = hasCircuitBreaker(provider);
+
+  // Fail fast without spending any of the retry budget if this provider
+  // is already known to be down — that's the entire point of a breaker:
+  // stop adding load (and latency) to a provider that's already failing.
+  if (breakered) await assertCircuitClosed(provider);
 
   let lastError: any;
   for (let attempt = 1; attempt <= policy.attempts; attempt++) {
     try {
-      return await withTimeout(fn, policy.timeoutMs);
+      const result = await withTimeout(fn, policy.timeoutMs);
+      if (breakered) await recordCircuitSuccess(provider);
+      return result;
     } catch (err: any) {
       lastError = err;
       const attemptsLeft = policy.attempts - attempt;
@@ -106,6 +119,12 @@ export async function withRetry<T>(
         retryable,
         message: err?.message ?? String(err)
       });
+
+      // Every failed attempt counts toward the breaker's rolling window,
+      // not just the final one after retries are exhausted — five
+      // failures spread across five different logical operations is
+      // exactly the pattern a breaker exists to catch.
+      if (breakered) await recordCircuitFailure(provider);
 
       if (!retryable || attemptsLeft === 0) break;
 
