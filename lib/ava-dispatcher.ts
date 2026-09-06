@@ -65,7 +65,42 @@ async function getActiveOrder(supabase: SupabaseClient, ctx: DispatchContext) {
   return data as any;
 }
 
+/**
+ * Structured observability around every tool call: which tool, which
+ * call/business, how long it took, and how it ended — the fields this
+ * needs to answer "why was this call slow" or "how often does this tool
+ * fail" without grepping raw logs. Wraps dispatchToolInner rather than
+ * living inside it so every case in the switch gets this for free,
+ * instead of each one remembering to log for itself.
+ */
 export async function dispatchTool(name: string, params: any, ctx: DispatchContext): Promise<Record<string, any>> {
+  const startedAt = Date.now();
+  let finalStatus: 'ok' | 'error' = 'ok';
+  let errorCategory: string | undefined;
+
+  try {
+    const result = await dispatchToolInner(name, params, ctx);
+    return result;
+  } catch (err: any) {
+    finalStatus = 'error';
+    errorCategory = err?.name ?? 'unknown_error';
+    throw err;
+  } finally {
+    logger.info('dispatch_tool', {
+      tool_name: name,
+      business_id: ctx.businessId,
+      mode: ctx.mode,
+      call_id: ctx.callId ?? undefined,
+      provider_call_id: ctx.providerCallId ?? undefined,
+      practice_session_id: ctx.practiceSessionId ?? undefined,
+      tool_duration_ms: Date.now() - startedAt,
+      final_status: finalStatus,
+      error_category: errorCategory
+    });
+  }
+}
+
+async function dispatchToolInner(name: string, params: any, ctx: DispatchContext): Promise<Record<string, any>> {
   const supabase = supabaseServiceRole();
   const { businessId } = ctx;
 
