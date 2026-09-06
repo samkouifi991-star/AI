@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { supabaseServiceRole } from './supabase/admin';
 import { retrieveAndAnswer } from './rag';
 import { calculateEstimate, PricingRule } from './pricing';
@@ -418,6 +419,30 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
 
       const line_total = lineTotal(itemInput);
 
+      // Idempotency: the model can re-invoke add_order_item for the exact
+      // same logical item (it didn't register its own prior success, or a
+      // tool-call event got redelivered) — that must not double the item.
+      // Voice function-calling doesn't hand back a stable id the model
+      // then reliably resends unchanged, so the key is derived from the
+      // request's own content plus a coarse time bucket: narrow enough
+      // that a customer genuinely re-ordering the same item minutes later
+      // gets a new key, wide enough to catch a rapid re-ask of the same
+      // request moments after the first one.
+      const timeBucket = Math.floor(Date.now() / 5000);
+      const clientRequestId = createHash('sha256')
+        .update(
+          JSON.stringify({
+            order: order.id,
+            menuItemId: itemInput.menu_item_id,
+            size: itemInput.size_label,
+            qty: itemInput.quantity,
+            modifiers: itemInput.modifiers,
+            notes: itemInput.special_instructions,
+            timeBucket
+          })
+        )
+        .digest('hex');
+
       const { error: itemInsertError } = await supabase.from('order_items').insert({
         order_id: order.id,
         menu_item_id: itemInput.menu_item_id,
@@ -427,10 +452,20 @@ export async function dispatchTool(name: string, params: any, ctx: DispatchConte
         quantity: itemInput.quantity,
         modifiers: itemInput.modifiers,
         special_instructions: itemInput.special_instructions,
-        line_total
+        line_total,
+        client_request_id: clientRequestId
       });
 
-      if (itemInsertError) return { result: 'Could not add that item.' };
+      if (itemInsertError) {
+        // Unique violation on (order_id, client_request_id) means this
+        // exact item was already added moments ago — the retry case this
+        // is designed for, not a real failure, so report it the same way
+        // the original successful add did.
+        if (itemInsertError.code === '23505') {
+          return { result: 'item_added', order_id: order.id, item: itemInput.name_snapshot, line_total };
+        }
+        return { result: 'Could not add that item.' };
+      }
       return { result: 'item_added', order_id: order.id, item: itemInput.name_snapshot, line_total };
     }
 
