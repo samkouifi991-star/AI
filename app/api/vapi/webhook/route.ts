@@ -210,14 +210,23 @@ async function handleEndOfCall(
   if (callRowId) {
     await supabase.from('calls').update(updatePayload).eq('id', callRowId);
   } else {
-    await supabase.from('calls').insert({
-      business_id: businessId,
-      provider_call_id: call?.id,
-      from_number: call?.customer?.number,
-      to_number: call?.phoneNumber?.number,
-      active_language: finalLanguage,
-      ...updatePayload
-    });
+    // Upserted on provider_call_id (unique index, migration 0020) rather
+    // than a blind insert — an end-of-call-report without a callRowId
+    // (metadata didn't round-trip) could otherwise create a second row
+    // for a call the Twilio-forwarding fallback already logged under the
+    // same provider call id. Unlike the call-start upsert, this one
+    // should win on conflict — it carries the authoritative final state.
+    await supabase.from('calls').upsert(
+      {
+        business_id: businessId,
+        provider_call_id: call?.id,
+        from_number: call?.customer?.number,
+        to_number: call?.phoneNumber?.number,
+        active_language: finalLanguage,
+        ...updatePayload
+      },
+      { onConflict: 'provider_call_id' }
+    );
   }
 
   return { status: 200, body: { ok: true } };

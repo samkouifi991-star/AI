@@ -33,14 +33,22 @@ export async function POST(req: NextRequest) {
   }
 
   // Log the inbound call immediately so it shows up in the dashboard even
-  // before the AI's end-of-call report arrives.
-  await supabase.from('calls').insert({
-    business_id: business.id,
-    provider_call_id: callSid,
-    from_number: from,
-    to_number: to,
-    status: 'in_progress'
-  });
+  // before the AI's end-of-call report arrives. Upserted on
+  // provider_call_id (unique index, migration 0020) rather than a blind
+  // insert — Twilio can redeliver this webhook, and a second insert for
+  // the same CallSid would otherwise create a duplicate call row.
+  // ignoreDuplicates: a redelivery shouldn't reset a row a later step
+  // (e.g. the end-of-call report) may have already updated.
+  await supabase.from('calls').upsert(
+    {
+      business_id: business.id,
+      provider_call_id: callSid,
+      from_number: from,
+      to_number: to,
+      status: 'in_progress'
+    },
+    { onConflict: 'provider_call_id', ignoreDuplicates: true }
+  );
 
   const dial = twiml.dial();
   dial.number(business.ai_phone_number);
