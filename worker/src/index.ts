@@ -1,8 +1,11 @@
 import http from 'http';
+import { WebSocketServer } from 'ws';
 import { loadConfig, type WorkerConfig } from './config';
+import { attachTwilioStreamHandler } from './twilio-stream';
 import { logger } from '../../lib/logger';
 
 const startedAt = Date.now();
+let activeCallCount = 0;
 
 function loadConfigOrExit(): WorkerConfig {
   try {
@@ -26,7 +29,7 @@ function main() {
         JSON.stringify({
           status: 'ok',
           uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
-          activeCalls: 0 // real count wired in once call sessions exist (worker/src/twilio-stream.ts)
+          activeCalls: activeCallCount
         })
       );
       return;
@@ -42,6 +45,40 @@ function main() {
     // instead of a clearly-labeled log line — distinguish it here.
     logger.error('voice_worker_listen_failed', { port: config.port, errorMessage: err.message });
     process.exit(1);
+  });
+
+  // { noServer: true } — this WS server doesn't listen on its own port;
+  // it only handles connections the HTTP server's 'upgrade' event hands
+  // it below, so Twilio's Media Stream WebSocket and the /health HTTP
+  // check share the single port Railway exposes for this service.
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on('upgrade', (req, socket, head) => {
+    if (req.url !== '/media-stream') {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      activeCallCount += 1;
+      logger.info('voice_worker_stream_connection_opened', { activeCallCount });
+
+      let closed = false;
+      const onEnded = () => {
+        if (closed) return;
+        closed = true;
+        activeCallCount = Math.max(0, activeCallCount - 1);
+        logger.info('voice_worker_stream_connection_closed', { activeCallCount });
+      };
+
+      attachTwilioStreamHandler(ws, {
+        // Real business resolution + OpenAI Realtime bridging land in the
+        // next milestones — this one only has to prove Twilio's protocol
+        // is parsed correctly, so onStart/onMedia are intentionally
+        // no-ops beyond what attachTwilioStreamHandler already logs.
+      });
+      ws.on('close', onEnded);
+      ws.on('error', onEnded);
+    });
   });
 
   server.listen(config.port, () => {

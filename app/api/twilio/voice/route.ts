@@ -3,14 +3,22 @@ import { supabaseServiceRole } from '@/lib/supabase/admin';
 import twilio from 'twilio';
 
 /**
- * Twilio calls this when someone dials the business's AI receptionist
- * number (the number the owner forwards their real line to). We look up
- * which business owns this Twilio number, then <Dial> into that business's
- * Vapi assistant phone number, passing the business id along as metadata
- * via the <Dial> "referUrl"/status callback pattern — Vapi assistants are
- * typically provisioned 1:1 with a Twilio number, so in practice this route
- * mainly logs the inbound call and lets Vapi's own number handle answering.
- * This is the fallback/logging path for numbers proxied through Twilio.
+ * Twilio calls this when someone dials a business's number. Two distinct
+ * cases, resolved in this order:
+ *
+ *  1. The dialed number IS the business's direct AI-answering number
+ *     (phone_numbers table, purchased through this app's own
+ *     provisioning) AND that business is on voice_runtime='direct' —
+ *     return <Connect><Stream> pointing at the Railway voice worker, with
+ *     the business id as a stream Parameter (how the worker resolves
+ *     which business a call belongs to — see worker/src/twilio-stream.ts).
+ *     voice_runtime='vapi' numbers never reach this branch: Vapi's own
+ *     imported number answers those directly, this route only exists for
+ *     'direct' runtime and the forwarding case below.
+ *
+ *  2. Otherwise, fall back to the original forwarding behavior: the
+ *     dialed number is the business's own public number
+ *     (businesses.phone_number), forwarded to their ai_phone_number.
  */
 export async function POST(req: NextRequest) {
   const form = await req.formData();
@@ -19,6 +27,35 @@ export async function POST(req: NextRequest) {
   const callSid = form.get('CallSid') as string;
 
   const supabase = supabaseServiceRole();
+
+  const { data: directNumber } = await supabase
+    .from('phone_numbers')
+    .select('business_id, businesses(id, name, voice_runtime)')
+    .eq('phone_number', to)
+    .eq('status', 'active')
+    .maybeSingle();
+
+  const directBusiness = (directNumber as any)?.businesses;
+  if (directBusiness?.voice_runtime === 'direct') {
+    const workerUrl = process.env.VOICE_WORKER_URL;
+    if (!workerUrl) {
+      const twiml = new twilio.twiml.VoiceResponse();
+      twiml.say('Thanks for calling. We are unable to connect you right now, please try again later.');
+      return new NextResponse(twiml.toString(), { headers: { 'Content-Type': 'text/xml' } });
+    }
+
+    await supabase.from('calls').upsert(
+      { business_id: directBusiness.id, provider_call_id: callSid, from_number: from, to_number: to, status: 'in_progress' },
+      { onConflict: 'provider_call_id', ignoreDuplicates: true }
+    );
+
+    const twiml = new twilio.twiml.VoiceResponse();
+    const connect = twiml.connect();
+    const stream = connect.stream({ url: workerUrl });
+    stream.parameter({ name: 'businessId', value: directBusiness.id });
+    return new NextResponse(twiml.toString(), { headers: { 'Content-Type': 'text/xml' } });
+  }
+
   const { data: business } = await supabase
     .from('businesses')
     .select('id, ai_phone_number, name')
