@@ -1,9 +1,20 @@
 import type { WebSocket } from 'ws';
 import { logger } from '../../lib/logger';
 import { getOrCreateCallConfigSnapshot, type CallConfigSnapshot } from '../../lib/call-config-snapshot';
+// The whole point of this worker: reuse the exact same tool dispatcher
+// and tool schema live Vapi calls and /practice already use — never a
+// second implementation of what a tool does or how it's described.
+import { dispatchTool } from '../../lib/ava-dispatcher';
+import { VAPI_TOOLS } from '../../lib/vapi-tools';
 import { attachTwilioStreamHandler } from './twilio-stream';
-import { RealtimeSession } from './realtime-session';
+import { RealtimeSession, type RealtimeTool } from './realtime-session';
 import type { WorkerConfig } from './config';
+
+// This prototype only offers the caller the one tool named in its own
+// instructions (buildPrototypeInstructions below) — filtered from the
+// same VAPI_TOOLS list Vapi's assistant and /practice draw from, not a
+// separately typed-out copy of find_menu_item's schema.
+const PROTOTYPE_TOOLS: RealtimeTool[] = VAPI_TOOLS.filter((t) => t.name === 'find_menu_item');
 
 const TONE_CLAUSES: Record<string, string> = {
   friendly: 'warm and friendly',
@@ -74,8 +85,25 @@ export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
           instructions: buildPrototypeInstructions(snapshot),
           streamSid: msg.start.streamSid,
           twilioWs: ws,
-          tools: [], // find_menu_item wired in the next milestone
-          onFunctionCall: async () => JSON.stringify({ result: 'Tool calling is wired in a later milestone.' }),
+          tools: PROTOTYPE_TOOLS,
+          onFunctionCall: async (name, argsJson) => {
+            let params: Record<string, any> = {};
+            try {
+              params = argsJson ? JSON.parse(argsJson) : {};
+            } catch (err: any) {
+              logger.error('call_session_function_call_bad_json', { streamSid: msg.start.streamSid, tool: name, errorMessage: err.message });
+            }
+            // callId is null — no `calls` row exists for this call yet
+            // (that lands in the next milestone); dispatchTool's
+            // find_menu_item case doesn't read it, only businessId.
+            const result = await dispatchTool(name, params, {
+              businessId,
+              mode: 'live',
+              callId: null,
+              providerCallId: msg.start.callSid
+            });
+            return JSON.stringify(result);
+          },
           onError: () => {
             try {
               ws.close();
