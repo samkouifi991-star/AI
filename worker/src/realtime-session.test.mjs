@@ -33,6 +33,7 @@ async function run() {
   const twilioWs = new FakeTwilioWs();
   const functionCallLog = [];
 
+  let onReadyFired = 0;
   const session = new RealtimeSession({
     apiKey: 'unused-fake-key',
     instructions: 'Test instructions',
@@ -42,6 +43,10 @@ async function run() {
     onFunctionCall: async (name, argsJson) => {
       functionCallLog.push({ name, argsJson });
       return JSON.stringify({ result: 'found', matches: [{ name: 'Cheeseburger' }] });
+    },
+    onReady: () => {
+      onReadyFired += 1;
+      session.triggerFirstMessage();
     },
     transport
   });
@@ -59,9 +64,17 @@ async function run() {
   assert.equal(updateEvent.session.instructions, 'Test instructions');
   console.log('PASS: session.update sent with correct config after session.created');
 
-  // 2. session.updated -> session becomes ready, audio should now forward
+  // 2. session.updated -> session becomes ready, onReady fires exactly
+  //    once and triggers the greeting (response.create), audio forwards
   transport.emit('session.updated', { type: 'session.updated', event_id: 'evt_2', session: updateEvent.session });
   assert.equal(session.isReady(), true, 'expected session to be ready after session.updated');
+  assert.equal(onReadyFired, 1, 'expected onReady to fire exactly once');
+  assert.equal(transport.sent.filter((e) => e.type === 'response.create').length, 1, 'expected triggerFirstMessage to have sent one response.create');
+
+  // A second session.updated (shouldn't normally happen, but defensively) must not re-fire onReady or double-greet.
+  transport.emit('session.updated', { type: 'session.updated', event_id: 'evt_2b', session: updateEvent.session });
+  assert.equal(onReadyFired, 1, 'expected onReady NOT to fire again on a second session.updated');
+  console.log('PASS: onReady fires exactly once and triggers exactly one greeting response.create');
 
   session.sendCallerAudio('ZmFrZS1hdWRpbw==');
   const audioAppendEvents = transport.sent.filter((e) => e.type === 'input_audio_buffer.append');
@@ -112,7 +125,9 @@ async function run() {
   assert.equal(JSON.parse(outputEvent.item.output).matches[0].name, 'Cheeseburger');
 
   const responseCreateEvents = transport.sent.filter((e) => e.type === 'response.create');
-  assert.equal(responseCreateEvents.length, 1, 'expected exactly one response.create to continue the conversation after the tool result');
+  // One from the greeting (step 2) plus one more to continue the
+  // conversation after the tool result -- two total, not a duplicate.
+  assert.equal(responseCreateEvents.length, 2, 'expected the greeting response.create plus one more after the tool result');
   console.log('PASS: function-call name/args correlation and result round-trip all correct');
 
   console.log('\nALL ASSERTIONS PASSED');

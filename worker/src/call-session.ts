@@ -69,7 +69,7 @@ export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
           runtime: snapshot.runtime
         });
 
-        realtime = new RealtimeSession({
+        const session = new RealtimeSession({
           apiKey: config.openaiApiKey,
           instructions: buildPrototypeInstructions(snapshot),
           streamSid: msg.start.streamSid,
@@ -82,8 +82,13 @@ export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
             } catch {
               // already closing
             }
+          },
+          onReady: () => {
+            logger.info('call_session_first_message_triggered', { streamSid: msg.start.streamSid });
+            session.triggerFirstMessage();
           }
         });
+        realtime = session;
         sessionStarting = false;
       })();
     },

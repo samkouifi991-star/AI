@@ -39,6 +39,8 @@ export interface RealtimeSessionOptions {
   /** Called when the model finishes emitting a function call's arguments. Must resolve to the tool's result — a JSON string — which is fed back into the conversation. */
   onFunctionCall: (name: string, argsJson: string) => Promise<string>;
   onError?: (err: Error) => void;
+  /** Fires once the session is configured and ready to speak — the hook worker/src/call-session.ts uses to trigger the greeting via triggerFirstMessage(). */
+  onReady?: () => void;
   /** Test-only seam — defaults to a real OpenAIRealtimeWS connection. */
   transport?: RealtimeTransport;
 }
@@ -88,8 +90,10 @@ export class RealtimeSession {
     });
 
     this.rt.on('session.updated', () => {
+      const wasReady = this.ready;
       this.ready = true;
       logger.info('realtime_session_ready', { streamSid: this.streamSid });
+      if (!wasReady) options.onReady?.();
     });
 
     this.rt.on('response.audio.delta', (event) => {
