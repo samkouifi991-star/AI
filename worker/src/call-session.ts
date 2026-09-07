@@ -8,6 +8,7 @@ import { dispatchTool } from '../../lib/ava-dispatcher';
 import { VAPI_TOOLS } from '../../lib/vapi-tools';
 import { attachTwilioStreamHandler } from './twilio-stream';
 import { RealtimeSession, type RealtimeTool } from './realtime-session';
+import { upsertCallStart, markCallEnded } from './call-lifecycle';
 import type { WorkerConfig } from './config';
 
 // This prototype only offers the caller the one tool named in its own
@@ -49,6 +50,7 @@ function buildPrototypeInstructions(snapshot: CallConfigSnapshot): string {
 export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
   let realtime: RealtimeSession | null = null;
   let sessionStarting = false;
+  let callId: string | null = null;
 
   attachTwilioStreamHandler(ws, {
     onStart: (msg) => {
@@ -64,14 +66,28 @@ export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
 
       sessionStarting = true;
       void (async () => {
-        let snapshot: CallConfigSnapshot;
-        try {
-          snapshot = await getOrCreateCallConfigSnapshot({ businessId, providerCallId: msg.start.callSid });
-        } catch (err: any) {
-          logger.error('call_session_snapshot_load_failed', { streamSid: msg.start.streamSid, businessId, errorMessage: err.message });
+        // Independent of each other — run together rather than one after
+        // the other to keep the caller's wait for the greeting shorter.
+        const [snapshotResult, callRowId] = await Promise.all([
+          getOrCreateCallConfigSnapshot({ businessId, providerCallId: msg.start.callSid }).then(
+            (value) => ({ ok: true as const, value }),
+            (err: any) => ({ ok: false as const, err })
+          ),
+          upsertCallStart({
+            businessId,
+            providerCallId: msg.start.callSid,
+            fromNumber: msg.start.customParameters?.from,
+            toNumber: msg.start.customParameters?.to
+          })
+        ]);
+        callId = callRowId;
+
+        if (!snapshotResult.ok) {
+          logger.error('call_session_snapshot_load_failed', { streamSid: msg.start.streamSid, businessId, errorMessage: snapshotResult.err.message });
           ws.close();
           return;
         }
+        const snapshot: CallConfigSnapshot = snapshotResult.value;
 
         logger.info('call_session_config_loaded', {
           streamSid: msg.start.streamSid,
@@ -93,13 +109,10 @@ export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
             } catch (err: any) {
               logger.error('call_session_function_call_bad_json', { streamSid: msg.start.streamSid, tool: name, errorMessage: err.message });
             }
-            // callId is null — no `calls` row exists for this call yet
-            // (that lands in the next milestone); dispatchTool's
-            // find_menu_item case doesn't read it, only businessId.
             const result = await dispatchTool(name, params, {
               businessId,
               mode: 'live',
-              callId: null,
+              callId,
               providerCallId: msg.start.callSid
             });
             return JSON.stringify(result);
@@ -134,6 +147,7 @@ export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
     onStop: () => {
       realtime?.close();
       realtime = null;
+      if (callId) void markCallEnded(callId);
     }
   });
 
@@ -143,5 +157,10 @@ export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
     }
     realtime?.close();
     realtime = null;
+    // Twilio normally sends "stop" before closing the socket, so this is
+    // usually a no-op double-mark (idempotent — it's just an update to
+    // the same row) — kept as a safety net for a connection that drops
+    // without a clean "stop" ever arriving.
+    if (callId) void markCallEnded(callId);
   });
 }

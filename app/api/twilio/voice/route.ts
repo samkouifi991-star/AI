@@ -53,6 +53,8 @@ export async function POST(req: NextRequest) {
     const connect = twiml.connect();
     const stream = connect.stream({ url: workerUrl });
     stream.parameter({ name: 'businessId', value: directBusiness.id });
+    stream.parameter({ name: 'from', value: from });
+    stream.parameter({ name: 'to', value: to });
     return new NextResponse(twiml.toString(), { headers: { 'Content-Type': 'text/xml' } });
   }
 
