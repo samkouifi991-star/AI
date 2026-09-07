@@ -1,7 +1,7 @@
 import http from 'http';
 import { WebSocketServer } from 'ws';
 import { loadConfig, type WorkerConfig } from './config';
-import { attachTwilioStreamHandler } from './twilio-stream';
+import { handleCallSession } from './call-session';
 import { logger } from '../../lib/logger';
 
 const startedAt = Date.now();
@@ -70,12 +70,7 @@ function main() {
         logger.info('voice_worker_stream_connection_closed', { activeCallCount });
       };
 
-      attachTwilioStreamHandler(ws, {
-        // Real business resolution + OpenAI Realtime bridging land in the
-        // next milestones — this one only has to prove Twilio's protocol
-        // is parsed correctly, so onStart/onMedia are intentionally
-        // no-ops beyond what attachTwilioStreamHandler already logs.
-      });
+      handleCallSession(ws, config);
       ws.on('close', onEnded);
       ws.on('error', onEnded);
     });
