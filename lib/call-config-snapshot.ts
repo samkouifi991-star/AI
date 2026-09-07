@@ -9,6 +9,22 @@ export interface AiEmployeeSettingsSnapshot {
   can_book_appointments: boolean;
   can_offer_discounts: boolean;
   escalation_phone_number: string | null;
+  tone: string | null;
+}
+
+export interface BusinessProfileSnapshot {
+  name: string;
+  businessType: string | null;
+  serviceArea: string | null;
+}
+
+export interface RoutingSnapshot {
+  transferOnCustomerRequest: boolean;
+  urgentTransferEnabled: boolean;
+  voicemailFallbackEnabled: boolean;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string | null;
+  quietHoursEnd: string | null;
 }
 
 export interface RestaurantSettingsSnapshot {
@@ -32,6 +48,8 @@ export interface CallConfigSnapshot {
   runtime: 'vapi' | 'direct';
   timezone: string;
   transferNumber: string | null;
+  business: BusinessProfileSnapshot;
+  routing: RoutingSnapshot;
   aiEmployeeSettings: AiEmployeeSettingsSnapshot;
   businessHours: { day_of_week: number; open_time: string | null; close_time: string | null; is_closed: boolean }[];
   specialHours: { date: string; is_closed: boolean; open_time: string | null; close_time: string | null; note: string | null }[];
@@ -45,7 +63,17 @@ const DEFAULT_AI_EMPLOYEE_SETTINGS: AiEmployeeSettingsSnapshot = {
   can_quote_prices: true,
   can_book_appointments: true,
   can_offer_discounts: false,
-  escalation_phone_number: null
+  escalation_phone_number: null,
+  tone: 'friendly'
+};
+
+const DEFAULT_ROUTING: RoutingSnapshot = {
+  transferOnCustomerRequest: true,
+  urgentTransferEnabled: true,
+  voicemailFallbackEnabled: true,
+  quietHoursEnabled: false,
+  quietHoursStart: null,
+  quietHoursEnd: null
 };
 
 const DEFAULT_VOICE_SETTINGS: VoiceSettingsSnapshot = {
@@ -61,12 +89,12 @@ const DEFAULT_VOICE_SETTINGS: VoiceSettingsSnapshot = {
  * everything after that first call reads the frozen copy instead.
  */
 async function buildSnapshot(supabase: SupabaseClient, businessId: string): Promise<CallConfigSnapshot> {
-  const [{ data: business }, { data: employeeSettings }, { data: hoursRows }, { data: specialRows }, { data: voiceSettings }, { data: restaurantSettings }, { data: menuAgg }] =
+  const [{ data: business }, { data: employeeSettings }, { data: hoursRows }, { data: specialRows }, { data: voiceSettings }, { data: restaurantSettings }, { data: menuAgg }, { data: routingRow }] =
     await Promise.all([
-      supabase.from('businesses').select('timezone, business_type, voice_runtime').eq('id', businessId).maybeSingle(),
+      supabase.from('businesses').select('name, timezone, business_type, service_area, voice_runtime').eq('id', businessId).maybeSingle(),
       supabase
         .from('ai_employee_settings')
-        .select('can_take_orders, can_quote_prices, can_book_appointments, can_offer_discounts, escalation_phone_number')
+        .select('can_take_orders, can_quote_prices, can_book_appointments, can_offer_discounts, escalation_phone_number, tone')
         .eq('business_id', businessId)
         .maybeSingle(),
       supabase.from('business_hours').select('day_of_week, open_time, close_time, is_closed').eq('business_id', businessId),
@@ -85,7 +113,12 @@ async function buildSnapshot(supabase: SupabaseClient, businessId: string): Prom
         .select('tax_rate, delivery_fee, discount_code, discount_percent, pay_at_pickup, pay_at_delivery')
         .eq('business_id', businessId)
         .maybeSingle(),
-      supabase.from('menu_items').select('updated_at').eq('business_id', businessId).order('updated_at', { ascending: false }).limit(1).maybeSingle()
+      supabase.from('menu_items').select('updated_at').eq('business_id', businessId).order('updated_at', { ascending: false }).limit(1).maybeSingle(),
+      supabase
+        .from('call_routing_rules')
+        .select('transfer_on_customer_request, urgent_transfer_enabled, voicemail_fallback_enabled, quiet_hours_enabled, quiet_hours_start, quiet_hours_end')
+        .eq('business_id', businessId)
+        .maybeSingle()
     ]);
 
   return {
@@ -93,6 +126,17 @@ async function buildSnapshot(supabase: SupabaseClient, businessId: string): Prom
     runtime: business?.voice_runtime === 'direct' ? 'direct' : 'vapi',
     timezone: business?.timezone ?? 'America/New_York',
     transferNumber: employeeSettings?.escalation_phone_number ?? process.env.TWILIO_PHONE_NUMBER ?? null,
+    business: { name: business?.name ?? 'this business', businessType: business?.business_type ?? null, serviceArea: business?.service_area ?? null },
+    routing: routingRow
+      ? {
+          transferOnCustomerRequest: routingRow.transfer_on_customer_request,
+          urgentTransferEnabled: routingRow.urgent_transfer_enabled,
+          voicemailFallbackEnabled: routingRow.voicemail_fallback_enabled,
+          quietHoursEnabled: routingRow.quiet_hours_enabled,
+          quietHoursStart: routingRow.quiet_hours_start,
+          quietHoursEnd: routingRow.quiet_hours_end
+        }
+      : DEFAULT_ROUTING,
     aiEmployeeSettings: employeeSettings ?? DEFAULT_AI_EMPLOYEE_SETTINGS,
     businessHours: hoursRows ?? [],
     specialHours: specialRows ?? [],
