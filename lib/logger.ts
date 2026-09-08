@@ -15,10 +15,20 @@ function redact(context?: LogContext) {
   if (!context) return undefined;
   const clean: LogContext = {};
   for (const [key, value] of Object.entries(context)) {
-    if (/key|token|secret|password|authorization/i.test(key)) {
-      clean[key] = '[redacted]';
+    // `message` collides with the logger's own top-level event-name
+    // argument below (`{ level, message, ...redact(context), timestamp }`)
+    // — since this spread lands after `message`, a context object with
+    // its own `message` key (e.g. `{ message: err.message }`, used all
+    // over this codebase) silently overwrites the event name with the
+    // raw error text instead of sitting alongside it. That's exactly
+    // backwards: the event name is what makes a log line greppable and
+    // alertable; renamed rather than dropped so no call site needs to
+    // change and no information is lost.
+    const safeKey = key === 'message' ? 'error_message' : key;
+    if (/key|token|secret|password|authorization/i.test(safeKey)) {
+      clean[safeKey] = '[redacted]';
     } else {
-      clean[key] = value;
+      clean[safeKey] = value;
     }
   }
   return clean;
