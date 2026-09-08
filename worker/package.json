@@ -1,0 +1,21 @@
+{
+  "name": "voice-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Always-running voice worker for Business Pilot AI's direct voice runtime: Twilio Media Streams -> OpenAI Realtime -> the shared dispatchTool() -> Supabase. Deployed separately from the Next.js app (which stays on Vercel) because a phone call is a long-lived bidirectional connection, not a request/response workload. Part of the business-pilot-ai npm workspace so it shares one node_modules with the root app and can import lib/ava-dispatcher.ts directly -- never a duplicated copy of the business logic.",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "openai": "^4.56.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.15",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4"
+  }
+}

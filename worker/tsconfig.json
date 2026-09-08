@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    // "dom" alongside the Node target isn't a typo: Node's global fetch/
+    // Response/Headers are the same Fetch API surface DOM types describe,
+    // and lib/vapi-assistant.ts (pulled in transitively via
+    // lib/ava-dispatcher.ts -> lib/dead-letter-queue.ts's
+    // retry_assistant_sync handler) relies on Response.json() resolving
+    // to `any` the way DOM's lib types describe it, not the stricter
+    // `unknown` Node's own ambient fetch types give it without DOM
+    // merged in. Matches the root tsconfig's lib array for exactly this
+    // reason, so this standalone typecheck agrees with `next build`'s.
+    "lib": ["ES2022", "dom"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

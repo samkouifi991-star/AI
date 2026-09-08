@@ -2,13 +2,17 @@
   "name": "business-pilot-ai",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "worker"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "worker:dev": "tsx watch worker/src/index.ts",
-    "worker:start": "tsx worker/src/index.ts"
+    "worker:dev": "npm run dev --workspace=worker",
+    "worker:start": "npm run start --workspace=worker",
+    "worker:typecheck": "npm run typecheck --workspace=worker"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.1",
@@ -23,20 +27,17 @@
     "react-dom": "^18.3.1",
     "resend": "^4.0.0",
     "stripe": "^16.9.0",
-    "twilio": "^5.2.3",
-    "ws": "^8.18.0"
+    "twilio": "^5.2.3"
   },
   "devDependencies": {
     "@types/node": "^20.14.15",
     "@types/pdf-parse": "^1.1.4",
     "@types/react": "^18.3.3",
-    "@types/ws": "^8.5.12",
     "autoprefixer": "^10.4.19",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.35",
     "postcss": "^8.4.40",
     "tailwindcss": "^3.4.7",
-    "tsx": "^4.19.1",
     "typescript": "^5.5.4"
   }
 }
