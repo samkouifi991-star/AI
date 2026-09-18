@@ -37,6 +37,19 @@ Needs the same `.env.local` the main app uses (`NEXT_PUBLIC_SUPABASE_URL`,
 lists exactly what's missing if any are absent). `OPENAI_REALTIME_MODEL` is
 optional — see the comment above `DEFAULT_MODEL` in `src/realtime-session.ts`.
 
+This package pins `openai@^7.18.0` and `ws@^8.21.0` — newer than the root
+app's own `openai@^4.56.0` (`lib/openai.ts`, `lib/voice/providers/openai.ts`,
+used by the live Vapi call path, which is deliberately NOT touched by this).
+npm workspaces resolve that version conflict by nesting a separate copy in
+`worker/node_modules/openai` rather than hoisting one shared version — run
+`npm install` at the repo root and confirm with `ls worker/node_modules/openai`
+if this ever looks unresolved. `engines.node` is `>=22.0.0` here (the SDK's own requirement) — confirm
+Railway's Nixpacks build actually picks Node 22+ (check the build log), and
+if not, set the `NIXPACKS_NODE_VERSION=22` variable on the Railway service.
+Deliberately not forced via a repo-root `.nvmrc`/root `engines` field: those
+would also change Vercel's Node runtime selection for the main app, which is
+out of scope here.
+
 ## Deploying on Railway
 
 1. **New service → Deploy from GitHub repo**, pick this repo. Leave the

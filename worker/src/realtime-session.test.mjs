@@ -56,13 +56,16 @@ async function run() {
   assert.equal(transport.sent.length, 1, 'expected exactly one session.update after session.created');
   const updateEvent = transport.sent[0];
   assert.equal(updateEvent.type, 'session.update');
-  assert.equal(updateEvent.session.input_audio_format, 'g711_ulaw');
-  assert.equal(updateEvent.session.output_audio_format, 'g711_ulaw');
-  assert.equal(updateEvent.session.turn_detection.type, 'server_vad');
+  assert.equal(updateEvent.session.type, 'realtime');
+  assert.deepEqual(updateEvent.session.output_modalities, ['audio']);
+  assert.equal(updateEvent.session.audio.input.format.type, 'audio/pcmu');
+  assert.equal(updateEvent.session.audio.output.format.type, 'audio/pcmu');
+  assert.equal(updateEvent.session.audio.input.turn_detection.type, 'server_vad');
+  assert.equal(updateEvent.session.audio.input.transcription.model, 'whisper-1');
   assert.equal(updateEvent.session.tools.length, 1);
   assert.equal(updateEvent.session.tools[0].name, 'find_menu_item');
   assert.equal(updateEvent.session.instructions, 'Test instructions');
-  console.log('PASS: session.update sent with correct config after session.created');
+  console.log('PASS: session.update sent with correct config after session.created (GA gpt-realtime-2.1 schema)');
 
   // 2. session.updated -> session becomes ready, onReady fires exactly
   //    once and triggers the greeting (response.create), audio forwards
@@ -82,13 +85,13 @@ async function run() {
   assert.equal(audioAppendEvents[0].audio, 'ZmFrZS1hdWRpbw==');
   console.log('PASS: caller audio forwarded to Realtime after ready');
 
-  // 3. response.audio.delta -> must relay to Twilio as a media frame
-  transport.emit('response.audio.delta', { type: 'response.audio.delta', event_id: 'evt_3', delta: 'ZmFrZS1yZXNwb25zZS1hdWRpbw==', item_id: 'item_1', output_index: 0, content_index: 0, response_id: 'resp_1' });
+  // 3. response.output_audio.delta -> must relay to Twilio as a media frame
+  transport.emit('response.output_audio.delta', { type: 'response.output_audio.delta', event_id: 'evt_3', delta: 'ZmFrZS1yZXNwb25zZS1hdWRpbw==', item_id: 'item_1', output_index: 0, content_index: 0, response_id: 'resp_1' });
   assert.equal(twilioWs.sentFrames.length, 1, 'expected one Twilio media frame sent');
   assert.equal(twilioWs.sentFrames[0].event, 'media');
   assert.equal(twilioWs.sentFrames[0].streamSid, 'MZ_test');
   assert.equal(twilioWs.sentFrames[0].media.payload, 'ZmFrZS1yZXNwb25zZS1hdWRpbw==');
-  console.log('PASS: response.audio.delta relayed to Twilio as a media frame');
+  console.log('PASS: response.output_audio.delta relayed to Twilio as a media frame');
 
   // 4. function-call correlation: output_item.added (name) then
   //    function_call_arguments.done (args, no name) must resolve to the
@@ -129,6 +132,26 @@ async function run() {
   // conversation after the tool result -- two total, not a duplicate.
   assert.equal(responseCreateEvents.length, 2, 'expected the greeting response.create plus one more after the tool result');
   console.log('PASS: function-call name/args correlation and result round-trip all correct');
+
+  // 5. Transcript accumulation from both renamed GA events.
+  transport.emit('response.output_audio_transcript.done', {
+    type: 'response.output_audio_transcript.done',
+    event_id: 'evt_6',
+    item_id: 'item_3',
+    output_index: 0,
+    content_index: 0,
+    response_id: 'resp_1',
+    transcript: "We've got a great cheeseburger."
+  });
+  transport.emit('conversation.item.input_audio_transcription.completed', {
+    type: 'conversation.item.input_audio_transcription.completed',
+    event_id: 'evt_7',
+    item_id: 'item_4',
+    content_index: 0,
+    transcript: 'Do you have any burgers?'
+  });
+  assert.equal(session.getTranscript(), "Ava: We've got a great cheeseburger.\nCaller: Do you have any burgers?", 'expected both transcript sources accumulated in arrival order');
+  console.log('PASS: transcript accumulated from response.output_audio_transcript.done and conversation.item.input_audio_transcription.completed');
 
   console.log('\nALL ASSERTIONS PASSED');
 }

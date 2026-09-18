@@ -1,6 +1,12 @@
 import OpenAI from 'openai';
-import { OpenAIRealtimeWS } from 'openai/beta/realtime/ws';
-import type { RealtimeClientEvent, RealtimeServerEvent } from 'openai/resources/beta/realtime/realtime';
+// Non-beta import: the GA Realtime API (gpt-realtime and later) lives at
+// openai/realtime/*, not openai/beta/realtime/* — the beta path still
+// exists in the SDK for the old preview-snapshot models, but its session
+// schema is the old flat one (modalities/input_audio_format/...) and does
+// not speak for gpt-realtime-2.1. See the schema comment on DEFAULT_MODEL
+// below for what actually changed.
+import { OpenAIRealtimeWS } from 'openai/realtime/ws';
+import type { RealtimeClientEvent, RealtimeServerEvent } from 'openai/resources/realtime/realtime';
 import type { WebSocket as TwilioWebSocket } from 'ws';
 import { logger } from '../../lib/logger';
 import { sendTwilioMedia } from './twilio-stream';
@@ -45,16 +51,35 @@ export interface RealtimeSessionOptions {
   transport?: RealtimeTransport;
 }
 
-// Kept in sync with lib/realtime-diagnostic.ts's first candidate. This
-// sandbox's network policy blocks every path to api.openai.com, so this
-// exact model id has never been live-verified from here — before the real
-// test call, hit the deployed app's /api/admin/verify-realtime (it runs on
-// Vercel, which isn't network-restricted the way this sandbox is) and
-// check `realtimeModelAccessible` in its response. If that names a
-// different model than this one, set OPENAI_REALTIME_MODEL to it in
-// Railway's env vars rather than editing this file — config.ts reads it
-// as an override, so a wrong default here never requires a redeploy to fix.
-const DEFAULT_MODEL = 'gpt-4o-realtime-preview-2024-12-17';
+// gpt-realtime-2.1 is the current GA Realtime model (confirmed against the
+// `openai` npm package's own published type definitions — this sandbox
+// cannot reach api.openai.com to verify anything live, so the SDK's types
+// are the ground truth used here, not memory or a guess). The GA API
+// changed the session.update schema from the old preview shape this file
+// used to send:
+//   - session now needs an explicit `type: 'realtime'` (was implicit)
+//   - `modalities` -> `output_modalities`, and only `['audio']` is valid
+//     (the old `['audio', 'text']` is rejected: GA no longer allows both)
+//   - `voice`, `input_audio_format`/`output_audio_format`, and
+//     `turn_detection` moved off the top level and into a nested `audio:
+//     { input: {...}, output: {...} }` object
+//   - audio format is now an object (`{ type: 'audio/pcmu' }` for G.711
+//     μ-law) instead of the old flat string `'g711_ulaw'`
+//   - output events renamed: `response.audio.delta` ->
+//     `response.output_audio.delta`, `response.audio_transcript.done` ->
+//     `response.output_audio_transcript.done`
+// Tool definitions, conversation.item.create/function_call_output,
+// response.create, response.output_item.added, and
+// response.function_call_arguments.done are unchanged.
+//
+// Before the real test call, hit the deployed app's
+// /api/admin/verify-realtime (it runs on Vercel, which isn't
+// network-restricted the way this sandbox is) and confirm it reports this
+// model as accessible. If a different model needs to be used, set
+// OPENAI_REALTIME_MODEL in Railway's env vars rather than editing this
+// file — config.ts reads it as an override, so a wrong default here never
+// requires a redeploy to fix.
+const DEFAULT_MODEL = 'gpt-realtime-2.1';
 
 /**
  * One OpenAI Realtime session per call, bridging exactly two things: raw
@@ -87,19 +112,26 @@ export class RealtimeSession {
       this.rt.send({
         type: 'session.update',
         session: {
-          modalities: ['audio', 'text'],
+          type: 'realtime',
           instructions: options.instructions,
-          voice: (options.voice as any) ?? 'alloy',
-          input_audio_format: 'g711_ulaw',
-          output_audio_format: 'g711_ulaw',
-          // Runs the caller's audio through a separate ASR pass (always
-          // whisper-1, per the Realtime API — independent of the
-          // conversational model) purely so there's a caller-side
-          // transcript to save alongside the assistant's own
-          // response.audio_transcript.done text below. Not "recording" in
-          // the excluded-scope sense: no audio is stored, only text.
-          input_audio_transcription: { model: 'whisper-1' },
-          turn_detection: { type: 'server_vad', create_response: true },
+          output_modalities: ['audio'],
+          audio: {
+            input: {
+              format: { type: 'audio/pcmu' },
+              turn_detection: { type: 'server_vad', create_response: true },
+              // Runs the caller's audio through a separate ASR pass
+              // (independent of the conversational model) purely so
+              // there's a caller-side transcript to save alongside the
+              // assistant's own response.output_audio_transcript.done
+              // text below. Not "recording" in the excluded-scope sense:
+              // no audio is stored, only text.
+              transcription: { model: 'whisper-1' }
+            },
+            output: {
+              format: { type: 'audio/pcmu' },
+              voice: options.voice ?? 'alloy'
+            }
+          },
           tools: (options.tools ?? []).map((t) => ({ type: 'function' as const, name: t.name, description: t.description, parameters: t.parameters })),
           tool_choice: options.tools && options.tools.length > 0 ? 'auto' : 'none'
         }
@@ -113,7 +145,7 @@ export class RealtimeSession {
       if (!wasReady) options.onReady?.();
     });
 
-    this.rt.on('response.audio.delta', (event) => {
+    this.rt.on('response.output_audio.delta', (event) => {
       sendTwilioMedia(this.twilioWs, this.streamSid, event.delta);
     });
 
@@ -121,7 +153,7 @@ export class RealtimeSession {
     // their "done" event arrives — close enough to conversational order
     // for a first-prototype call record, without trying to interleave by
     // timestamp.
-    this.rt.on('response.audio_transcript.done', (event) => {
+    this.rt.on('response.output_audio_transcript.done', (event) => {
       if (event.transcript) this.transcriptLines.push(`Ava: ${event.transcript}`);
     });
     this.rt.on('conversation.item.input_audio_transcription.completed', (event) => {
