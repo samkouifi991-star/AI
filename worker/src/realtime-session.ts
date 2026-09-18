@@ -45,6 +45,15 @@ export interface RealtimeSessionOptions {
   transport?: RealtimeTransport;
 }
 
+// Kept in sync with lib/realtime-diagnostic.ts's first candidate. This
+// sandbox's network policy blocks every path to api.openai.com, so this
+// exact model id has never been live-verified from here — before the real
+// test call, hit the deployed app's /api/admin/verify-realtime (it runs on
+// Vercel, which isn't network-restricted the way this sandbox is) and
+// check `realtimeModelAccessible` in its response. If that names a
+// different model than this one, set OPENAI_REALTIME_MODEL to it in
+// Railway's env vars rather than editing this file — config.ts reads it
+// as an override, so a wrong default here never requires a redeploy to fix.
 const DEFAULT_MODEL = 'gpt-4o-realtime-preview-2024-12-17';
 
 /**
@@ -61,6 +70,7 @@ export class RealtimeSession {
   private streamSid: string;
   private ready = false;
   private pendingFunctionCallNames = new Map<string, string>(); // call_id -> function name
+  private transcriptLines: string[] = [];
 
   constructor(options: RealtimeSessionOptions) {
     this.twilioWs = options.twilioWs;
@@ -82,6 +92,13 @@ export class RealtimeSession {
           voice: (options.voice as any) ?? 'alloy',
           input_audio_format: 'g711_ulaw',
           output_audio_format: 'g711_ulaw',
+          // Runs the caller's audio through a separate ASR pass (always
+          // whisper-1, per the Realtime API — independent of the
+          // conversational model) purely so there's a caller-side
+          // transcript to save alongside the assistant's own
+          // response.audio_transcript.done text below. Not "recording" in
+          // the excluded-scope sense: no audio is stored, only text.
+          input_audio_transcription: { model: 'whisper-1' },
           turn_detection: { type: 'server_vad', create_response: true },
           tools: (options.tools ?? []).map((t) => ({ type: 'function' as const, name: t.name, description: t.description, parameters: t.parameters })),
           tool_choice: options.tools && options.tools.length > 0 ? 'auto' : 'none'
@@ -98,6 +115,17 @@ export class RealtimeSession {
 
     this.rt.on('response.audio.delta', (event) => {
       sendTwilioMedia(this.twilioWs, this.streamSid, event.delta);
+    });
+
+    // Two independent transcript sources, both appended in the order
+    // their "done" event arrives — close enough to conversational order
+    // for a first-prototype call record, without trying to interleave by
+    // timestamp.
+    this.rt.on('response.audio_transcript.done', (event) => {
+      if (event.transcript) this.transcriptLines.push(`Ava: ${event.transcript}`);
+    });
+    this.rt.on('conversation.item.input_audio_transcription.completed', (event) => {
+      if (event.transcript) this.transcriptLines.push(`Caller: ${event.transcript}`);
     });
 
     // Function-call items arrive in two parts: this event names which
@@ -156,6 +184,11 @@ export class RealtimeSession {
 
   isReady(): boolean {
     return this.ready;
+  }
+
+  /** Plain-text transcript accumulated so far, one line per completed turn — null once there's nothing to save (nothing was transcribed, e.g. the call ended before either side finished a turn). */
+  getTranscript(): string | null {
+    return this.transcriptLines.length > 0 ? this.transcriptLines.join('\n') : null;
   }
 
   close(): void {

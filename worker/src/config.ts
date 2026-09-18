@@ -19,6 +19,8 @@ export interface WorkerConfig {
   openaiApiKey: string;
   twilioAccountSid: string;
   twilioAuthToken: string;
+  /** Optional override for realtime-session.ts's DEFAULT_MODEL — see the comment there for why this needs to be changeable without a code deploy. */
+  realtimeModel?: string;
 }
 
 const REQUIRED_VARS = ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'OPENAI_API_KEY', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'] as const;
@@ -36,6 +38,7 @@ export function loadConfig(): WorkerConfig {
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
     openaiApiKey: process.env.OPENAI_API_KEY!,
     twilioAccountSid: process.env.TWILIO_ACCOUNT_SID!,
-    twilioAuthToken: process.env.TWILIO_AUTH_TOKEN!
+    twilioAuthToken: process.env.TWILIO_AUTH_TOKEN!,
+    realtimeModel: process.env.OPENAI_REALTIME_MODEL || undefined
   };
 }

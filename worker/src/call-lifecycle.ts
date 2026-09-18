@@ -35,9 +35,15 @@ export async function upsertCallStart(params: { businessId: string; providerCall
   return data.id;
 }
 
-export async function markCallEnded(callId: string): Promise<void> {
+export async function markCallEnded(callId: string, transcript?: string | null): Promise<void> {
   const supabase = supabaseServiceRole();
-  const { error } = await supabase.from('calls').update({ status: 'completed', ended_at: new Date().toISOString() }).eq('id', callId);
+  const update: Record<string, unknown> = { status: 'completed', ended_at: new Date().toISOString() };
+  // Only overwrite the existing transcript column when this call actually
+  // produced one — markCallEnded is also called as a safety net on an
+  // unclean disconnect (see call-session.ts), where a second call with no
+  // transcript should never blank out one a first call already saved.
+  if (transcript) update.transcript = transcript;
+  const { error } = await supabase.from('calls').update(update).eq('id', callId);
   if (error) {
     logger.error('call_lifecycle_end_update_failed', { callId, errorMessage: error.message });
   }

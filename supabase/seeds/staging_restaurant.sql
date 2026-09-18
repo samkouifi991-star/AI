@@ -25,6 +25,16 @@
 --      URL needs to be pointed at app/api/twilio/voice by hand until a
 --      'direct'-aware provisioning path exists), and setting
 --      VOICE_WORKER_URL once the Railway worker is deployed.
+--   5. Once you know the real E.164 number you bought (e.g. +14125550100),
+--      come back and run the phone_numbers insert at the bottom of this
+--      file with that number substituted for REPLACE_WITH_STAGING_NUMBER.
+--      This step is NOT optional: app/api/twilio/voice/route.ts resolves
+--      which business a direct-runtime call belongs to by looking up the
+--      dialed number in the phone_numbers table with status='active' —
+--      without this row, that lookup finds nothing, the route falls
+--      through to its Vapi-forwarding branch (which this business has no
+--      ai_phone_number for), and the caller hears "we are unable to
+--      connect you right now" instead of ever reaching the worker.
 
 -- Sanity check this is being pointed at a real, already-existing business
 -- (created by the real signup in step 1) rather than accidentally
@@ -93,3 +103,24 @@ fries_item as (
 insert into menu_item_sizes (menu_item_id, label, price, sort_order)
 select fries_item.id, v.label, v.price, v.sort_order
 from fries_item, (values ('Regular', 6.49, 1), ('Large', 8.49, 2)) as v(label, price, sort_order);
+
+-- =========================================================
+-- Step 5 (run separately, AFTER you've actually bought the number —
+-- see the usage note at the top of this file). Replace
+-- REPLACE_WITH_STAGING_NUMBER with the real E.164 number, e.g.
+-- '+14125550100'. Guarded rather than a plain insert so re-running this
+-- block after editing the file again doesn't create a second row for the
+-- same number (phone_numbers has no unique constraint on phone_number
+-- itself to ON CONFLICT against).
+-- =========================================================
+do $$
+begin
+  if not exists (
+    select 1 from phone_numbers
+    where business_id = 'REPLACE_WITH_BUSINESS_ID'::uuid
+      and phone_number = 'REPLACE_WITH_STAGING_NUMBER'
+  ) then
+    insert into phone_numbers (business_id, source, phone_number, friendly_name, provider, number_type, status)
+    values ('REPLACE_WITH_BUSINESS_ID'::uuid, 'purchased', 'REPLACE_WITH_STAGING_NUMBER', 'Staging direct-runtime line', 'twilio', 'local', 'active');
+  end if;
+end $$;

@@ -34,7 +34,8 @@ root installs and hoists both the root app's and the worker's dependencies.
 Needs the same `.env.local` the main app uses (`NEXT_PUBLIC_SUPABASE_URL`,
 `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `TWILIO_ACCOUNT_SID`,
 `TWILIO_AUTH_TOKEN` at minimum — `worker/src/config.ts` fails fast and
-lists exactly what's missing if any are absent).
+lists exactly what's missing if any are absent). `OPENAI_REALTIME_MODEL` is
+optional — see the comment above `DEFAULT_MODEL` in `src/realtime-session.ts`.
 
 ## Deploying on Railway
 
@@ -56,17 +57,20 @@ lists exactly what's missing if any are absent).
    - `OPENAI_API_KEY`
    - `TWILIO_ACCOUNT_SID`
    - `TWILIO_AUTH_TOKEN`
+   - `OPENAI_REALTIME_MODEL` — optional, leave unset initially; see the
+     comment above `DEFAULT_MODEL` in `src/realtime-session.ts`.
    - `PORT` — leave unset; Railway injects this automatically and
-     `config.ts` reads it.
+     `config.ts` reads it. `src/index.ts` binds it on `0.0.0.0` explicitly.
 4. Confirm it's not sleeping: Railway's default "Web Service" deploy type
    is already an always-on persistent process (unlike some other
    platforms' free tiers) — nothing extra to configure for that, just
    don't deploy it as a Cron/scheduled service by mistake.
 5. Once deployed, Railway gives the service a public URL
-   (`*.up.railway.app` by default, or a custom domain). That URL's
-   `/media-stream` path (added in a later milestone) is what the staging
-   restaurant's Twilio number needs to point its Media Stream at — not
-   done yet as of this commit.
+   (`*.up.railway.app` by default, or a custom domain). Set
+   `VOICE_WORKER_URL` in **Vercel's** env vars (not Railway's) to
+   `wss://<that-domain>/media-stream` — `app/api/twilio/voice/route.ts`
+   reads it to build the TwiML that connects a `voice_runtime='direct'`
+   business's call to this worker.
 
 ## What's here
 
@@ -80,18 +84,24 @@ lists exactly what's missing if any are absent).
 - `src/config.ts` — env var loading, fails loudly on startup if anything's missing.
 - `src/index.ts` — the persistent HTTP server: `/health` for Railway's health
   check, WS upgrade handling at `/media-stream`, structured logs (the same
-  `lib/logger.ts` the rest of the app uses), graceful shutdown on
-  `SIGTERM`/`SIGINT` so a Railway-initiated restart closes cleanly instead
-  of dropping connections mid-response.
+  `lib/logger.ts` the rest of the app uses), explicit `0.0.0.0` bind,
+  graceful shutdown on `SIGTERM`/`SIGINT` so a Railway-initiated restart
+  closes cleanly instead of dropping connections mid-response.
 - `src/twilio-stream.ts` — parses/sends Twilio Media Streams protocol frames.
-- `src/realtime-session.ts` — the OpenAI Realtime WS session wrapper
-  (function-call correlation, audio streaming), transport-injected so it's
-  unit-testable without a live connection — see
-  `src/realtime-session.test.mjs`.
+- `src/realtime-session.ts` — the OpenAI Realtime WS session wrapper:
+  function-call correlation, audio streaming both directions, and
+  transcript accumulation from both `response.audio_transcript.done`
+  (Ava's side) and `conversation.item.input_audio_transcription.completed`
+  (the caller's side, via Realtime's built-in whisper-1 pass — no audio is
+  stored, only text). Transport-injected so it's unit-testable without a
+  live connection — see `src/realtime-session.test.mjs`.
 - `src/call-session.ts` — wires a Twilio stream to a Realtime session,
   loads the call-config snapshot, calls `dispatchTool()` for tool calls.
-- `src/call-lifecycle.ts` — saves call start/end to Supabase.
+- `src/call-lifecycle.ts` — saves call start/end/transcript to Supabase.
 
-Payments, SMS, transfers, recording, and failover are intentionally not
-wired into the worker yet — see the reliability architecture doc's
-migration plan for the full build order.
+This is already end-to-end for one call: Twilio → this worker →
+OpenAI Realtime → `dispatchTool()` → Supabase, with `find_menu_item` as the
+only wired tool. Payments, SMS, transfers, call recording (audio, not the
+text transcript above), and provider failover are intentionally not wired
+in yet — see the reliability architecture doc's migration plan for the
+full build order.

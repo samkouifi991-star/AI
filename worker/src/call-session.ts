@@ -98,6 +98,7 @@ export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
 
         const session = new RealtimeSession({
           apiKey: config.openaiApiKey,
+          model: config.realtimeModel,
           instructions: buildPrototypeInstructions(snapshot),
           streamSid: msg.start.streamSid,
           twilioWs: ws,
@@ -145,9 +146,10 @@ export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
     },
 
     onStop: () => {
+      const transcript = realtime?.getTranscript() ?? null;
       realtime?.close();
       realtime = null;
-      if (callId) void markCallEnded(callId);
+      if (callId) void markCallEnded(callId, transcript);
     }
   });
 
@@ -155,12 +157,13 @@ export function handleCallSession(ws: WebSocket, config: WorkerConfig): void {
     if (sessionStarting) {
       logger.warn('call_session_closed_during_startup', {});
     }
+    const transcript = realtime?.getTranscript() ?? null;
     realtime?.close();
     realtime = null;
     // Twilio normally sends "stop" before closing the socket, so this is
     // usually a no-op double-mark (idempotent — it's just an update to
     // the same row) — kept as a safety net for a connection that drops
     // without a clean "stop" ever arriving.
-    if (callId) void markCallEnded(callId);
+    if (callId) void markCallEnded(callId, transcript);
   });
 }

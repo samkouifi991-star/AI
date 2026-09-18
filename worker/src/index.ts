@@ -76,7 +76,12 @@ function main() {
     });
   });
 
-  server.listen(config.port, () => {
+  // Explicit '0.0.0.0' rather than relying on Node's default (which binds
+  // the unspecified IPv6 address '::' when IPv6 is available, only falling
+  // back to 0.0.0.0 if it isn't) — Railway's proxy reaches the container
+  // over IPv4, so this removes any ambiguity about whether that first
+  // fallback would ever actually trigger.
+  server.listen(config.port, '0.0.0.0', () => {
     logger.info('voice_worker_started', { port: config.port });
   });
 
